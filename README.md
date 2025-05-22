@@ -57,8 +57,8 @@ If you want to run this agent locally:
 
 1.  **Clone the repository:**
     ```bash
-    git clone YOUR_REPOSITORY_LINK_HERE # Replace with your Git repo link
-    cd YOUR_REPOSITORY_DIRECTORY
+    git clone [YOUR_REPOSITORY_LINK_HERE # Replace with your Git repo link](https://github.com/Acceleratorll/course_maker_agent.git)
+    cd course_maker_agent
     ```
 
 2.  **Create a virtual environment and activate it:**
@@ -71,7 +71,7 @@ If you want to run this agent locally:
     ```bash
     pip install -r requirements.txt
     ```
-    *(Ensure your `requirements.txt` file lists all necessary packages: `langchain`, `langgraph`, `langchain-openai`, `langchain-ollama`, `pydantic`, `python-dotenv`, `tavily-python`, `gradio`, `langsmith` etc.)*
+    *(Ensure your `requirements.txt` file lists all necessary packages: `langchain`, `langgraph`, `langchain-ollama`, `pydantic`, `python-dotenv`, `tavily-python`, `gradio`, `langsmith` etc.)*
 
 4.  **Set up Environment Variables:**
     Create a `.env` file in the root directory of the project and add your API keys:
@@ -86,11 +86,10 @@ If you want to run this agent locally:
     # LANGCHAIN_PROJECT="your_project_name_in_langsmith"
     ```
 5.  **Run the Gradio Application:**
-    Assuming your main Gradio script is `app.py` (or similar):
     ```bash
     python app.py
     ```
-    This will typically start a local web server, and you can access the Gradio interface in your browser (usually at `http://127.0.0.1:7860`).
+    This will start a local web server, and you can access the Gradio interface in your browser (usually at `http://127.0.0.1:7860`).
 
 ## 💡 Future Enhancements & Potential Improvements
 
