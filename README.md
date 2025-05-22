@@ -29,35 +29,6 @@ The agent is deployed on Hugging Face Spaces with a **Gradio** frontend for easy
 You can try out the AI Course Generation Agent live on Hugging Face Spaces:
 [➡️ Click here to access the Demo](https://huggingface.co/spaces/Tyullix14/course_maker)
 
-## 🛠️ How It Works (The Agent's Workflow)
-
-The agent uses LangGraph to define and execute a stateful graph. Each node in the graph represents a step in the course generation process:
-
-1.  **`generate_core_course` (Objective Definition):**
-    *   **Input:** Course topic, target audience.
-    *   **Action:** Uses an LLM (Google `gemini-2.5-flash-preview-04-17`) to define the primary `Objective` of the course.
-    *   **Output:** An `Objective` object.
-
-2.  **`search_web` (Knowledge Gathering):**
-    *   **Input:** The generated `Objective` and course topic.
-    *   **Action:**
-        *   Generates a search query using the LLM based on the objective.
-        *   Uses Tavily Search API to find relevant web documents.
-        *   Formats the search results into a `Knowledge` structure (though in the current code, it returns a list of formatted strings; this could be enhanced to populate the `Knowledge` Pydantic model more directly).
-    *   **Output:** A list of knowledge snippets/documents.
-
-3.  **`lesson_writer` (Lesson Creation):**
-    *   **Input:** Course topic, `Objective`, and gathered `Knowledge`.
-    *   **Action:** Instructs the LLM to write a comprehensive `Lesson` based on the provided inputs.
-    *   **Output:** A `Lesson` object.
-
-4.  **`finalize_course` (Course Summary):**
-    *   **Input:** The generated `Lesson`(s), `Objective`, and `Knowledge`.
-    *   **Action:** The LLM creates a final `Summary` for the course.
-    *   **Output:** The course summary string.
-
-The `CourseState` (a Pydantic `BaseModel`) holds all the information as it's generated and passed between these nodes.
-
 ## 💻 Technology Stack
 
 *   **Orchestration:** LangGraph
