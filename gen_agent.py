@@ -1,16 +1,11 @@
 import os
-import operator
 
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from typing import Annotated, List, Optional, TypedDict
-from typing_extensions import Literal
-from langchain_openai import ChatOpenAI
 from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import MessagesState, START, END, StateGraph
-from langgraph.constants import Send
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langsmith import traceable
 from langchain_core.tools import tool
@@ -42,9 +37,9 @@ class Knowledge(BaseModel):
 class Lesson(BaseModel):
     number: str = Field(description="The number of the lesson(e.g., Lesson 1.1). format:module[number].lesson[number]")
     title: str = Field(description="The title of the lesson")
-    explanation: str = Field(description="The explanation of the lesson")
-    case_study: str = Field(description="The case study of the lesson")
-    idead: str = Field(description="Ideas for simple interactive exercises (even text-based ones initially)")
+    explanation: str = Field(description="The detail explanation of the lesson")
+    case_study: Optional[str] = Field(description="The case study of the lesson")
+    idea: str = Field(description="Ideas for simple interactive exercises (even text-based ones initially)")
     reflection_questions: str = Field(description="Reflection questions for the lesson")
     
 class LessonsList(BaseModel):
@@ -73,6 +68,7 @@ class ModulesList(BaseModel):
 class CourseState(MessagesState):
     title: str
     subject: str
+    language: str
     added_details: Optional[str] = None
     target_audience: TargetAudience = Field(description="The target audience of the course")
     user_input: str = Field(description="The user input or command")
@@ -93,6 +89,7 @@ class UserInputAnalysis(BaseModel):
     target_audience: TargetAudience
     user_goal: Optional[str] = None
     added_details: Optional[str] = None
+    language: str
 
 load_dotenv()
 
@@ -182,7 +179,7 @@ llm_with_tools = llm.bind_tools(tools)
 def analyze_user_input(state: CourseState):
     """
     Analyze the user's input and extract key course parameters:
-    subject, title, target_audience, user_goal and added_details.
+    subject, title, target_audience, user_goal, language and added_details.
     """
     command = state['messages']
     analysis_instructions = SystemMessage(
@@ -212,6 +209,8 @@ def analyze_user_input(state: CourseState):
             "\n\n"
             "5.  **added_details**: Any additional specific instructions, requirements, or details the user provides regarding the course content, structure, or specific elements to include. Capture these details verbatim or summarize them accurately."
             "\n\n"
+            "6.  **language**: Language used for the course"
+            "\n\n"
             "Your output MUST be ONLY a JSON object matching the `UserInputAnalysis` schema, without any additional text, explanations, or markdown formatting outside the JSON."
         )
     )
@@ -223,12 +222,13 @@ def analyze_user_input(state: CourseState):
     return {
         "subject": result.subject,
         "title": result.title,
+        "language": result.language,
         "target_audience": result.target_audience,
         "added_details": result.added_details
     }
 
 @traceable(name="generate_objective")
-def get_generate_objective_instructions(subject, title, target_audience, added_details: Optional[str] = None):
+def get_generate_objective_instructions(subject, title, language, target_audience, added_details: Optional[str] = None):
     target_audience_str = str(target_audience)
     return SystemMessage(
         content=f"""You are an expert AI instructional designer with a specialization in curriculum development.
@@ -239,6 +239,7 @@ def get_generate_objective_instructions(subject, title, target_audience, added_d
         2.  **Course Title:** "{title}"
         3.  **Target Audience Profile:** {target_audience_str}
         4.  **Added Details:** "{added_details}"
+        5.  **Language:** "{language}"
 
         **Core Task: Generate Learning Objectives**
 
@@ -284,18 +285,19 @@ def get_generate_objective_instructions(subject, title, target_audience, added_d
     )
 
 @traceable(name="generate_core_course")
-def generate_core_course(state):
+def generate_core_course(state: CourseState):
     """ Generate a core element of making a course """
     try:
         subject = state["subject"]
         title = state["title"]
         target_audience = state["target_audience"]
         added_details = state["added_details"]
+        language = state['language']
     except KeyError as e:
         return {"messages": state.get("messages", []) + [AIMessage(content=f"Error: Missing key {e} in state.")]}
 
     structured_llm = llm_with_tools.with_structured_output(ObjectivesList)
-    instructions = get_generate_objective_instructions(subject, title, target_audience, added_details)
+    instructions = get_generate_objective_instructions(subject, title, language, target_audience, added_details)
     try:
         objectives_instance = structured_llm.invoke([
             instructions,
@@ -309,10 +311,11 @@ def generate_core_course(state):
 
     return {"objective": objectives_instance.objectives}
 
-def get_generate_lesson_instructions(module_number, module_title, module_topic, course_objectives, relevant_knowledge_base, course_target_audience, course_title):
+def get_generate_lesson_instructions(language, module_number, module_title, module_topic, course_objectives, relevant_knowledge_base, course_target_audience, course_title):
     return SystemMessage(
-        content=f"""You are an Expert AI Instructional Designer and Educational Content Creator.
-        Your mission is to develop detailed lesson plans for a specific module within a larger course. Generate multiple lesson plans based on the module's topic, the overall course objectives, and a provided knowledge base.
+        content=f"""You are an Expert AI Instructional Designer, writing and Educational Content Creator.
+        Your mission is to develop detailed lesson plans for a specific module within a larger course. 
+        Generate well written and well structured multiple lesson plans based on the module's topic, the overall course objectives, and a provided knowledge base.
         These lesson plans should be tailored for the specified target audience and fit within the overall course context.
         Prioritize incorporating active learning strategies, where students engage with the material (e.g., discussions, problem-solving, hands-on activities).
 
@@ -324,67 +327,22 @@ def get_generate_lesson_instructions(module_number, module_title, module_topic, 
             5. Module Title: {module_title}
             6. Module Topic: {module_topic}
             7. Knowledge Base: ```{relevant_knowledge_base}```
+            8. Main Language: {language}
 
         Phase 2: Design the Lesson Plans for Module {module_number} - "{module_title}"
         Based on the Module Topic, Course Objectives, and Knowledge Base, design a sequence of lessons for this specific module.
         Each lesson plan MUST include:
             1. Lesson Number: Format as ModuleNumber.LessonNumber (e.g., "1.1", "1.2", "2.1").
             2. Lesson Title: A concise and engaging title.
-            3. Explanation: Detailed content for the lesson.
-            4. Case Study: A relevant case study or example.
-            5. Idead: Ideas for simple interactive exercises (even text-based ones initially).
+            3. Explanation: Detailed content for the lesson(make sure you give the best explanation for the {course_target_audience}).
+            4. Case Study: A relevant case study or example (if needed).
+            5. Idea: Ideas for simple interactive exercises (even text-based ones initially).
             6. Reflection Questions: Questions to prompt learner reflection.
 
         Output:
-            - Provide a JSON object matching the LessonsList schema, for example:
-            {{ "lessons": [{{"number": "{module_number}.1", "title": "...", "explanation": "...", "case_study": "...", "idead": "...", "reflection_questions": "..."}}, ...] }}
         Do not include any additional text, explanations, or markdown formatting outside the JSON.
         """
     )
-
-@traceable(name="lesson_writer")
-def lesson_writer(state: CourseState):
-    """ Generate lessons for each module based on course knowledge and module structure """
-    objective = state["objective"]
-    knowledge = state["knowledge"]
-    target_audience = state["target_audience"]
-    title = state["title"]
-    modules = state["modules"]
-
-    if not modules:
-        print("Error: No modules found in state for lesson writing.")
-        return {"messages": state.get("messages", []) + [AIMessage(content="I need the module structure to write lessons. Something went wrong.")]}
-
-    updated_modules = []
-    for module in modules:
-        print(f"Generating lessons for {module.number} - {module.title}")
-        structured_llm = llm_with_tools.with_structured_output(LessonsList)
-        instructions = get_generate_lesson_instructions(
-            module_number=module.number.split(" ")[-1], # Extract number from "Module X"
-            module_title=module.title,
-            module_topic=module.topic,
-            course_objectives=objective,
-            relevant_knowledge_base=knowledge,
-            course_target_audience=target_audience,
-            course_title=title
-        )
-        try:
-            lessons_instance = structured_llm.invoke([
-                instructions,
-                HumanMessage(content=f"Generate lessons for {module.number} based on the provided details and knowledge.")
-            ])
-            module.lessons = lessons_instance.lessons
-            print(f"Generated {len(module.lessons)} lessons for {module.number}.")
-        except Exception as e:
-            print(f"Error generating lessons for {module.number}: {e}")
-            # Optionally add an error lesson or message to the module
-            module.lessons = [Lesson(number=f"{module.number.split(' ')[-1]}.0", title="Error generating lessons", explanation=f"Could not generate lessons for this module due to an error: {e}", case_study="", idead="", reflection_questions="")]
-
-
-        updated_modules.append(module)
-
-    # Update the modules field in the state with the lessons added
-    return {"modules": updated_modules}
 
 @traceable(name="course_knowledge_gatherer_node")
 def course_knowledge_gatherer_node(state: CourseState):
@@ -430,12 +388,14 @@ def module_organizer_node(state: CourseState):
     knowledge = state["knowledge"]
     title = state["title"]
     target_audience = state["target_audience"]
+    language = state["language"]
 
     # Create LLM instructions for module organization
     module_organizer_instructions = SystemMessage(
         content=f"""You are an expert AI curriculum designer.
         Your task is to structure a course into logical modules based on the provided objectives and gathered knowledge.
 
+        **Course Main Language:** {language}
         **Course Title:** {title}
         **Target Audience:** {target_audience}
         **Course Objectives:**
@@ -480,6 +440,7 @@ def lesson_writer(state: CourseState):
     target_audience = state["target_audience"]
     title = state["title"]
     modules = state["modules"]
+    language = state["language"]
 
     if not modules:
         print("Error: No modules found in state for lesson writing.")
@@ -490,6 +451,7 @@ def lesson_writer(state: CourseState):
         print(f"Generating lessons for {module.number} - {module.title}")
         structured_llm = llm_with_tools.with_structured_output(LessonsList)
         instructions = get_generate_lesson_instructions(
+            language=language,
             module_number=module.number.split(" ")[-1], # Extract number from "Module X"
             module_title=module.title,
             module_topic=module.topic,
@@ -517,44 +479,8 @@ def lesson_writer(state: CourseState):
     return {"modules": updated_modules}
 
 summary_maker = SystemMessage(
-    content="""You are an AI teacher.
-Your goal is to generate a well-structured summary for the course based on the lessons. Analyze the lessons and produce a concise course summary.
-"""
-)
-
-@traceable(name="finalize_course")
-def finalize_course(state: CourseState):
-    """ Combine course components to write a Course Summary """
-    # Finalize course now uses modules with nested lessons
-    modules = state["modules"]
-    objective = state["objective"]
-    knowledge = state["knowledge"]
-
-    # Format lessons from modules for the summary maker
-    all_lessons_content = []
-    for module in modules:
-        all_lessons_content.append(f"## {module.number} - {module.title}")
-        for lesson in module.lessons:
-            all_lessons_content.append(f"### {lesson.number} - {lesson.title}")
-            all_lessons_content.append(f"Explanation: {lesson.explanation}")
-            all_lessons_content.append(f"Case Study: {lesson.case_study}")
-            all_lessons_content.append(f"Ideas: {lesson.idead}")
-            all_lessons_content.append(f"Reflection Questions: {lesson.reflection_questions}")
-            all_lessons_content.append("---") # Separator between lessons
-
-    formatted_str_lessons = "\n\n".join(all_lessons_content)
-    formatted_str_objective = "\n\n---\n\n".join([f"{item}" for item in objective])
-    formatted_str_knowledge = "\n\n---\n\n".join([f"{item}" for item in knowledge])
-
-    summary = llm_with_tools.invoke([
-        summary_maker,
-        HumanMessage(content=f"Write a summary for the course based on the following:\nModules and Lessons:\n{formatted_str_lessons}\n\nObjectives: {formatted_str_objective}\n\nKnowledge: {formatted_str_knowledge}")
-    ])
-    return {"summary": summary.content} # Extract content from AIMessage
-
-summary_maker = SystemMessage(
-    content="""You are an AI teacher.
-Your goal is to generate a well-structured summary for the course based on the lessons. Analyze the lessons and produce a concise course summary.
+    content="""You are an best AI writer.
+Your goal is to generate a well-structured summary. Analyze the course and produce a well written and well structured summary.
 """
 )
 
@@ -562,17 +488,16 @@ Your goal is to generate a well-structured summary for the course based on the l
 def finalize_course(state: CourseState):
     """ Combine course components to write a Course Summary """
     modules = state["modules"]
-    objective = state["objective"]
     knowledge = state["knowledge"]
+    language = state["language"]
 
     formatted_str_modules = "\n\n---\n\n".join([f"{item}" for item in modules])
-    formatted_str_objective = "\n\n---\n\n".join([f"{item}" for item in objective])
     formatted_str_knowledge = "\n\n---\n\n".join([f"{item}" for item in knowledge])
     summary = llm_with_tools.invoke([
         summary_maker, 
-        HumanMessage(content=f"Write a summary for the course based on the following:\nModules: {formatted_str_modules}\nObjectives: {formatted_str_objective}\nKnowledge: {formatted_str_knowledge}")
+        HumanMessage(content=f"Write a summary for the course based on the following:\nModules: {formatted_str_modules}\nKnowledge: {formatted_str_knowledge} \nLanguage: {language}\nDo **not** include any additional text, explanations, or markdown formatting outside the JSON.")
     ])
-    return {"summary": summary}
+    return {"summary": summary.content}
 
 # System message
 sys_msg = SystemMessage(content="You are a helpful assistant.")
@@ -588,11 +513,15 @@ def entry_point_passthrough(state):
 
 def is_user_want_make_a_course(state):
     user_input = state["messages"][-1].content
-    keywords = ["course", "class", "lesson", "teach", "education", "module", "curriculum"]
-    if any(keyword in user_input for keyword in keywords):
-        return "analyze_user_input"
-    else:
-        return "assistant"
+    instruction = SystemMessage(content="""You are an AI decider. 
+                                Your purpose is to decide the next node to take. is user want to make a course?
+                                The output should be:
+                                'assistant' if the user dont want to make a course
+                                'analyze_user_input' if the user want to make a course
+                                Dont add any additional text, explanations, or markdown formatting.
+                               """)
+    result = llm_with_tools.invoke([instruction, HumanMessage(content=user_input)])
+    return result.content
 
 course_maker = StateGraph(CourseState)
 course_maker.add_node("entry_point_passthrough", entry_point_passthrough)

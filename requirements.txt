@@ -10,4 +10,4 @@ langchain-core
 langchain-google-genai
 tavily-python
 langgraph-cli[inmem]
-fpdf
+reportlab

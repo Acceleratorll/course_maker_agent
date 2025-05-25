@@ -1,249 +1,212 @@
 import gradio as gr
-from fpdf import FPDF
-import gen_agent
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, ListFlowable, PageBreak
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.enums import TA_JUSTIFY, TA_CENTER, TA_LEFT # Import TA_CENTER
 from gen_agent import CourseState, graph
-
 import os
-
-class PDF(FPDF):
-    def header(self):
-        # Remove header content as title is in the body
-        pass
-
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
-
-    def heading1(self, title):
-        """Add a Heading 1 style (largest heading for main title)"""
-        self.set_font('Arial', 'B', 16)  # Bold, size 16
-        # Ensure title text is properly encoded for FPDF
-        safe_title = str(title).encode('latin-1', errors='replace').decode('latin-1')
-        # Center the main title
-        self.cell(0, 15, safe_title, 0, 1, 'C')
-        self.ln(5)  # Add space after heading
-
-    def heading2(self, title):
-        """Add a Heading 2 style (for major sections)"""
-        self.set_font('Arial', 'B', 14)  # Bold, size 14
-        # Ensure title text is properly encoded for FPDF
-        safe_title = str(title).encode('latin-1', errors='replace').decode('latin-1')
-        self.cell(0, 10, safe_title, 0, 1, 'L')
-        self.ln(3)  # Add space after heading
-
-    def heading3(self, title):
-        """Add a Heading 3 style (for sub-sections)"""
-        self.set_font('Arial', 'B', 12)  # Bold, size 12
-        # Ensure title text is properly encoded for FPDF
-        safe_title = str(title).encode('latin-1', errors='replace').decode('latin-1')
-        self.cell(0, 8, safe_title, 0, 1, 'L')
-        self.ln(2)  # Add space after heading
-
-    def chapter_title(self, title):
-        """Legacy method - now redirects to heading2"""
-        self.heading2(title)
-
-    def chapter_body(self, body):
-        """Add standard body text"""
-        self.set_font('Arial', '', 11)  # Regular, size 11
-        # Ensure body is a string before encoding and handle potential encoding errors
-        encoded_body = str(body).encode('latin-1', errors='replace').decode('latin-1')
-        self.multi_cell(0, 8, encoded_body)
-        self.ln(3)  # Space after paragraph
-
-    def bullet_list_item(self, text, level=0):
-        """Add a bullet list item with specified indentation level"""
-        indent = 8 * level  # Indent based on level (0, 1, 2, etc.)
-        self.set_x(10 + indent)  # Set position with indentation
-        self.set_font('Arial', '', 11)
-        # Use a dash instead of unicode bullet to avoid encoding issues
-        self.cell(6, 6, '-', 0, 0, 'C')
-        # Ensure text is properly encoded for FPDF
-        safe_text = str(text).encode('latin-1', errors='replace').decode('latin-1')
-        self.multi_cell(0, 6, safe_text)
-        self.ln(2)  # Small space between items
-
-    def numbered_list_item(self, number, text, level=0):
-        """Add a numbered list item with specified indentation level"""
-        indent = 8 * level  # Indent based on level
-        self.set_x(10 + indent)  # Set position with indentation
-        self.set_font('Arial', '', 11)
-        # Add number and text
-        self.cell(10, 6, f"{number}.", 0, 0, 'R')
-        # Ensure text is properly encoded for FPDF
-        safe_text = str(text).encode('latin-1', errors='replace').decode('latin-1')
-        self.multi_cell(0, 6, safe_text)
-        self.ln(2)  # Small space between items
-
-    def indented_text(self, text, indent=1):
-        """Add text with specified level of indentation"""
-        margin = 10 * indent  # Calculate margin based on indent level
-        self.set_x(margin)  # Set position with indentation
-        self.set_font('Arial', '', 11)
-        text_width = self.w - margin - 10  # Adjust width for right margin
-        # Ensure text is properly encoded for FPDF
-        safe_text = str(text).encode('latin-1', errors='replace').decode('latin-1')
-        self.multi_cell(text_width, 8, safe_text)
-        self.ln(2)  # Small space after
-
-# New function: render_markdown
-def render_markdown(pdf, markdown_text):
-    """
-    A simple Markdown renderer that supports:
-      - Headings: '# ' for Heading1, '## ' for Heading2, '### ' for Heading3
-      - Bullet lists: lines starting with '- '
-      - Blank lines for spacing, and plain text paragraphs.
-    """
-    lines = markdown_text.splitlines()
-    for line in lines:
-        line = line.strip()
-        if line.startswith("### "):
-            pdf.heading3(line[4:])
-        elif line.startswith("## "):
-            pdf.heading2(line[3:])
-        elif line.startswith("# "):
-            pdf.heading1(line[2:])
-        elif line.startswith("- "):
-            pdf.bullet_list_item(line[2:])
-        elif line == "":
-            pdf.ln(3)
-        else:
-            pdf.chapter_body(line)
 
 def create_course_pdf(course_data, filename="generated_course.pdf"):
     """
-    Generates a PDF from the course data.
+    Generates a PDF from the course data using ReportLab.
     """
-    pdf = PDF()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
+    doc = SimpleDocTemplate(filename, pagesize=letter,
+                            rightMargin=40, leftMargin=40,
+                            topMargin=60, bottomMargin=18)
+    styles = getSampleStyleSheet()
+    style_heading1 = styles['Heading1']
+    style_heading2 = styles['Heading2']
+    style_heading3 = styles['Heading3']
+    style_body = styles['BodyText']
 
-    # Course Title (as Heading 1, centered)
+    style_body.firstLineIndent = 18 # Example: 18 points for indent
+    style_body.alignment = TA_JUSTIFY
+    style_body.fontSize = 11
+
+    # Style with no first line indent (for bullet list and sources)
+    style_no_indent = ParagraphStyle(
+        'NoIndent',
+        parent=style_body,
+        alignment=TA_LEFT,
+        firstLineIndent=0
+    )
+
+    # Modify heading styles
+    style_heading1.alignment = TA_CENTER # Center Heading 1
+    style_heading1.italic = False # Make Heading 1 non-italic
+    style_heading2.italic = False # Make Heading 2 non-italic
+    style_heading3.italic = False # Make Heading 3 non-italic
+
+
+    elements = []
+    
+    # Course Title
     if course_data.get("title"):
-        pdf.heading1(course_data.get("title", "Generated Course"))
-
-    # Objectives (as Heading 2, with bullet list items)
+        elements.append(Paragraph(course_data.get("title", "Generated Course"), style_heading1))
+        elements.append(Spacer(1, 12))
+    
+    # Objectives
     if course_data.get("objective"):
-        pdf.heading2("Learning Objectives")
+        elements.append(Paragraph("Learning Objectives", style_heading2))
+        elements.append(Spacer(1, 12))
         objectives_list = course_data["objective"]
         if isinstance(objectives_list, list):
+            objective_items = [] # List to hold text for bullet points
             for obj in objectives_list:
-                # Check if obj is a Pydantic object and has the expected attributes
-                if hasattr(obj, 'goal') and hasattr(obj, 'description') and hasattr(obj, 'scope'):
-                    # Use bullet list for each objective
-                    pdf.bullet_list_item(f"Goal: {str(obj.goal)}")
-                    
-                    # Description and scope as indented text
-                    pdf.indented_text(f"Description: {str(obj.description)}", indent=1)
-                    pdf.indented_text(f"Scope: {str(obj.scope)}", indent=1)
-                    pdf.ln(3) # Extra space between objectives
+                if hasattr(obj, 'goal'):
+                    objective_items.append(str(obj.goal)) # Add objective goal to the list
                 else:
-                    pdf.bullet_list_item(f"Could not process objective data: {str(obj)}")
-            pdf.ln(5) # Space after objectives section
-        else:
-             pdf.chapter_body(f"Could not process objectives list: {str(objectives_list)}")
+                    objective_items.append(f"Could not process objective data: {str(obj)}") # Add error message to the list
 
+            if objective_items: # Only add the list if there are items
+                elements.append(Spacer(1, 12))
+                # Create a bulleted list from the collected items
+                bullet_list = ListFlowable(
+                    [Paragraph(item, style_no_indent) for item in objective_items],
+                    bulletType='bullet', # Use bullet points
+                    # Add indentation if needed (adjust leftIndent and bulletIndent)
+                    leftIndent=20,
+                    bulletIndent=10
+                )
+                elements.append(bullet_list)
+                elements.append(Spacer(1, 12)) # Space after the list
+        else:
+            elements.append(Paragraph(f"Could not process objectives list: {str(objectives_list)}", style_body))
+            elements.append(Spacer(1, 12))
+    
     # Modules and Lessons
     if course_data.get("modules"):
-        pdf.heading2("Course Modules")
         modules_list = course_data["modules"]
         if isinstance(modules_list, list):
             for module in modules_list:
                 if hasattr(module, 'number') and hasattr(module, 'title') and hasattr(module, 'topic'):
-                    pdf.heading3(f"{module.number}: {module.title}")
-                    pdf.indented_text(f"Topic: {module.topic}", indent=1)
-                    pdf.ln(2)
-
+                    mod_title = f"{module.number}: {module.title}"
+                    elements.append(Paragraph(mod_title, style_heading2))
+                    elements.append(Spacer(1, 12))
+                    elements.append(Paragraph(str(module.topic), style_body))
+                    elements.append(Spacer(1, 12))
                     if hasattr(module, 'lessons') and isinstance(module.lessons, list):
                         for lesson in module.lessons:
-                            if hasattr(lesson, 'number') and hasattr(lesson, 'title') and hasattr(lesson, 'explanation') and hasattr(lesson, 'case_study') and hasattr(lesson, 'idead') and hasattr(lesson, 'reflection_questions'):
-                                pdf.heading3(f"{lesson.number}: {lesson.title}")
-                                pdf.indented_text(f"Explanation: {lesson.explanation}", indent=2)
-                                pdf.indented_text(f"Case Study: {lesson.case_study}", indent=2)
-                                pdf.indented_text(f"Ideas: {lesson.idead}", indent=2)
-                                pdf.indented_text(f"Reflection Questions: {lesson.reflection_questions}", indent=2)
-                                pdf.ln(3)
+                            if (hasattr(lesson, 'number') and hasattr(lesson, 'title') and 
+                                hasattr(lesson, 'explanation') and hasattr(lesson, 'reflection_questions')):
+                                les_title = f"{lesson.number}: {lesson.title}"
+                                elements.append(Paragraph(les_title, style_heading3))
+                                elements.append(Spacer(1, 12))
+                                # Markdown parsing: * for bullets, ** for bold
+                                import re
+                                explanation_raw = str(lesson.explanation)
+                                # Replace **text** with <b>text</b>
+                                explanation_raw = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", explanation_raw)
+                                # Split into lines
+                                lines = [line.strip() for line in explanation_raw.split('\n') if line.strip()]
+                                bullet_items = []
+                                normal_paragraphs = []
+                                for line in lines:
+                                    if line.startswith('* '):
+                                        bullet_items.append(Paragraph(line[2:], style_no_indent))
+                                    else:
+                                        normal_paragraphs.append(Paragraph(line, style_body))
+                                if bullet_items:
+                                    bullet_list = ListFlowable(
+                                        bullet_items,
+                                        bulletType='bullet',
+                                        leftIndent=20,
+                                        bulletIndent=10
+                                    )
+                                    elements.append(bullet_list)
+                                for para in normal_paragraphs:
+                                    elements.append(para)
+                                if getattr(lesson, 'case_study', None):
+                                    elements.append(Spacer(1, 12))
                             else:
-                                pdf.chapter_body(f"Could not process lesson data: {str(lesson)}")
-                        pdf.ln(5)
+                                elements.append(Paragraph(f"Could not process lesson data: {str(lesson)}", style_body))
+                        elements.append(Spacer(1, 12))
                     else:
-                        pdf.indented_text("No lessons in this module.", indent=1)
-                    pdf.ln(5)
+                        elements.append(Paragraph("No lessons in this module.", style_body))
+                        elements.append(Spacer(1, 12))
                 else:
-                    pdf.chapter_body(f"Could not process module data: {str(module)}")
+                    elements.append(Paragraph(f"Could not process module data: {str(module)}", style_body))
         else:
-            pdf.chapter_body(f"Could not process modules list: {str(modules_list)}")
-
-    # Summary (as Heading 2)
+            elements.append(Paragraph(f"Could not process modules list: {str(modules_list)}", style_body))
+    
+    # Summary
     if course_data.get("summary"):
-        pdf.heading2("Summary")
+        elements.append(PageBreak())
+        elements.append(Paragraph("Summary", style_heading2))
+        elements.append(Spacer(1, 12))
         summary_data = course_data["summary"]
-        # Extract content if it's a message object, otherwise use as is
         summary_text = summary_data.content if hasattr(summary_data, 'content') else str(summary_data)
-        render_markdown(pdf, summary_text)
-
-    # Sources (without title, just bullet list)
+        import re
+        summary_text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", summary_text)
+        lines = [line.strip() for line in summary_text.split('\n') if line.strip()]
+        bullet_items = []
+        normal_paragraphs = []
+        for line in lines:
+            if line.startswith('* '):
+                bullet_items.append(Paragraph(line[2:], style_no_indent))
+            else:
+                normal_paragraphs.append(Paragraph(line, style_body))
+        if bullet_items:
+            bullet_list = ListFlowable(
+                bullet_items,
+                bulletType='bullet',
+                leftIndent=20,
+                bulletIndent=10
+            )
+            elements.append(bullet_list)
+        for para in normal_paragraphs:
+            elements.append(para)
+        elements.append(Spacer(1, 12))
+    
+    # Sources
     if course_data.get("knowledge"):
         knowledge_list = course_data["knowledge"]
         if isinstance(knowledge_list, list):
+            elements.append(PageBreak())
+            elements.append(Paragraph("Sources", style_heading2))
+            elements.append(Spacer(1, 12))
             for source in knowledge_list:
                 if hasattr(source, 'title') and hasattr(source, 'source'):
-                    # Format each source as a bullet point without a heading
-                    pdf.bullet_list_item(f"{str(source.title)} ({str(source.source)})")
+                    text = f"{str(source.title)} ({str(source.source)})"
+                    elements.append(Paragraph(text, style_no_indent))
         else:
-            pdf.chapter_body(f"Could not process knowledge list: {str(knowledge_list)}")
-
-
-    # Save the PDF
+            elements.append(Paragraph(f"Could not process knowledge list: {str(knowledge_list)}", style_no_indent))
+    
+    doc.build(elements)
     pdf_path = os.path.join(os.getcwd(), filename)
-    pdf.output(pdf_path)
     return pdf_path
-
 
 async def generate_course(prompt):
     """
-    Invokes the LangGraph agent with the user's prompt, generates a PDF, and returns the PDF path.
+    Invokes the LangGraph agent with the user's prompt, generates a PDF using ReportLab, and returns the PDF path.
     """
     initial_state = {"messages": [("human", prompt)]}
-
     try:
         result = graph.invoke(initial_state)
-        # Assuming the result dictionary contains the necessary keys for PDF generation
-        # Need to ensure the result is a dictionary before passing to create_course_pdf
         if isinstance(result, dict):
-            # Check if the result dictionary contains an error message instead of course data
-            # This is a heuristic based on previous error output
-            # Check if 'messages' key exists and the last message is an error string
-            if "messages" in result and isinstance(result["messages"][-1], str) and "An error occurred:" in result["messages"][-1]:
-                 return f"Agent processing error: {result['messages'][-1]}"
-            # Also check if the result itself is an error string (less likely with LangGraph state)
+            if ("messages" in result 
+                and isinstance(result["messages"][-1], str) 
+                and "An error occurred:" in result["messages"][-1]):
+                return f"Agent processing error: {result['messages'][-1]}"
             elif isinstance(result, str) and "An error occurred:" in result:
-                 return result
+                return result
             else:
                 print("Course data received by create_course_pdf:")
-                print(result) # Add print statement to inspect data
+                print(result)
                 pdf_path = create_course_pdf(result)
                 return pdf_path
         else:
-            # Handle cases where the graph might return something other than a dictionary state
-            # This could be an error message string from the agent itself
             return f"Unexpected output format from agent: {result}"
     except Exception as e:
-        # Catch exceptions during graph invocation
         return f"An error occurred during agent invocation: {e}"
 
-# Define the Gradio interface
-# Input: Textbox for the user prompt
-# Output: File component for PDF download
 interface = gr.Interface(
     fn=generate_course,
     inputs=gr.Textbox(label="Enter your course generation prompt:"),
     outputs=gr.File(label="Download Generated Course PDF:"),
     title="Course Generation Agent",
-    description="Enter a prompt to generate a course outline, lessons, and summary as a downloadable PDF using the LangGraph agent."
+    description="Enter a prompt to generate a course outline, lessons, and summary as a downloadable PDF using the LangGraph agent.\n\nPrompt Example:\n('make a course of ai agent concepts (use recent reference like open ai paper, anthropic paper, google paper, etc) for web developer')"
 )
 
-# Launch the app
 if __name__ == "__main__":
     interface.launch()
