@@ -3,12 +3,14 @@ import os
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from typing import Annotated, List, Optional, TypedDict
+from langchain_ollama import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import MessagesState, START, END, StateGraph
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langsmith import traceable
 from langchain_core.tools import tool
+from langgraph.prebuilt import tools_condition, ToolNode
 
 class TargetAudience(BaseModel):
     age_range: Optional[str] = None
@@ -37,10 +39,10 @@ class Knowledge(BaseModel):
 class Lesson(BaseModel):
     number: str = Field(description="The number of the lesson(e.g., Lesson 1.1). format:module[number].lesson[number]")
     title: str = Field(description="The title of the lesson")
-    explanation: str = Field(description="The detail explanation of the lesson")
+    explanation: Optional[str] = Field(description="The detail explanation of the lesson")
     case_study: Optional[str] = Field(description="The case study of the lesson")
-    idea: str = Field(description="Ideas for simple interactive exercises (even text-based ones initially)")
-    reflection_questions: str = Field(description="Reflection questions for the lesson")
+    idea: Optional[str] = Field(description="Ideas for simple interactive exercises (even text-based ones initially)")
+    reflection_questions: Optional[str] = Field(description="Reflection questions for the lesson")
     
 class LessonsList(BaseModel):
     lessons: List[Lesson]
@@ -59,7 +61,7 @@ class Prerequisite(BaseModel):
 class Modules(BaseModel):
     number: str = Field(description="The number of the module(e.g., Module 1)")
     title: str = Field(description="The title of the module(e.g., Fundamental of AI Agent)")
-    topic: str = Field(description="The topic of the module")
+    achieved: str = Field(description="What you get after completing the module")
     lessons: List[Lesson] = Field(description="The lessons in the module")
 
 class ModulesList(BaseModel):
@@ -75,7 +77,6 @@ class CourseState(MessagesState):
     prerequisites: List[Prerequisite] = Field(description="The prerequisites of the course")
     objective: List[Objective] = Field(default_factory=list, description="The objective of the course")
     modules: List[Modules] = Field(default_factory=list, description="The modules of the course")
-    lesson: List[Lesson] = Field(default_factory=list, description="The lessons of the course")
     knowledge: List[Knowledge] = Field(default_factory=list, description="The knowledge of the lesson")
     summary: str
     description: str
@@ -94,8 +95,8 @@ class UserInputAnalysis(BaseModel):
 load_dotenv()
 
 # Uncomment or choose your desired LLM
-# llm = ChatOllama(model="qwen3:1.7b", temperature=0.3)
-llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-preview-04-17")
+# llm = ChatOllama(model="qwen3:4b", temperature=0.3)
+llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
 
 class SearchInput(BaseModel):
     research_need: str = Field(description="The primary topic, question, or information need that requires web research. This is the core of the search.")
@@ -239,7 +240,7 @@ def get_generate_objective_instructions(subject, title, language, target_audienc
         2.  **Course Title:** "{title}"
         3.  **Target Audience Profile:** {target_audience_str}
         4.  **Added Details:** "{added_details}"
-        5.  **Language:** "{language}"
+        5.  **Main Language:** "{language}"
 
         **Core Task: Generate Learning Objectives**
 
@@ -311,36 +312,48 @@ def generate_core_course(state: CourseState):
 
     return {"objective": objectives_instance.objectives}
 
-def get_generate_lesson_instructions(language, module_number, module_title, module_topic, course_objectives, relevant_knowledge_base, course_target_audience, course_title):
+def get_generate_lesson_instructions(language, course_title, module_number, module_title, module_achieved, relevant_knowledge_base, course_target_audience, lesson):
     return SystemMessage(
-        content=f"""You are an Expert AI Instructional Designer, writing and Educational Content Creator.
-        Your mission is to develop detailed lesson plans for a specific module within a larger course. 
-        Generate well written and well structured multiple lesson plans based on the module's topic, the overall course objectives, and a provided knowledge base.
-        These lesson plans should be tailored for the specified target audience and fit within the overall course context.
-        Prioritize incorporating active learning strategies, where students engage with the material (e.g., discussions, problem-solving, hands-on activities).
+        content=f"""You are an AI Expert Writer Educational Content Creator.
+        Your primary mission is to write detailed, engaging, and effective lesson content for a specific module within a larger course.
+        Crucially, prioritize the integration of active learning strategies and practical application throughout the lessons.
 
-        Phase 1: Understand the Context
-            1. Overall Course Title: {course_title}
-            2. Target Audience: {course_target_audience}
-            3. Overall Course Objectives: {course_objectives}
+        Phase 1: Understand the Course and Module Context
+
+            1. Overall Course Title: "{course_title}"
+            2. Target Audience Profile: {course_target_audience}
+            3. Main Language: {language}
             4. Module Number: {module_number}
-            5. Module Title: {module_title}
-            6. Module Topic: {module_topic}
-            7. Knowledge Base: ```{relevant_knowledge_base}```
-            8. Main Language: {language}
+            5. Module Title: "{module_title}"
+            6. Module Learning Outcome (Achieved): "{module_achieved}"
+            7. Relevant Knowledge Base: ```{relevant_knowledge_base}``` - Utilize this information to inform and enrich the lesson content. Synthesize key points and examples from this knowledge base.
+            8. Lesson Title: "{lesson.title}"
+            9. Lesson Number: "{lesson.number}"
 
-        Phase 2: Design the Lesson Plans for Module {module_number} - "{module_title}"
-        Based on the Module Topic, Course Objectives, and Knowledge Base, design a sequence of lessons for this specific module.
-        Each lesson plan MUST include:
-            1. Lesson Number: Format as ModuleNumber.LessonNumber (e.g., "1.1", "1.2", "2.1").
-            2. Lesson Title: A concise and engaging title.
-            3. Explanation: Detailed content for the lesson(make sure you give the best explanation for the {course_target_audience}).
-            4. Case Study: A relevant case study or example (if needed).
-            5. Idea: Ideas for simple interactive exercises (even text-based ones initially).
-            6. Reflection Questions: Questions to prompt learner reflection.
+        Phase 2: Write Detailed Content for Lesson "{lesson.title}" (Number: {lesson.number})
 
-        Output:
-        Do not include any additional text, explanations, or markdown formatting outside the JSON.
+        Based on the context above, write the content for this lesson, ensuring it is clear, accurate, and engaging for the "{course_target_audience}".
+
+        The lesson content MUST be a JSON object with the following fields:
+
+            1.  "explanation": string - Detailed, well-written content explaining the lesson's concepts. This should be the core instructional material, tailored to the target audience's level of understanding and prior knowledge.
+                - For beginner audiences, use analogies, real-world examples, and avoid technical jargon.
+                - For expert audiences, use precise language, technical details, and assume a high level of prior knowledge.
+            2.  "case_study": string (Optional) - A relevant, real-world case study, detailed example, or practical scenario that directly illustrates and helps learners apply the concepts taught in the "explanation". This should provide concrete context and demonstrate the practical relevance of the lesson. If a case study is not applicable or necessary for a specific lesson, provide an empty string or null. Consider varying the format or complexity of case studies across lessons to maintain engagement.
+            3.  "idea": string (Optional) - A concrete idea for a simple interactive exercise or activity related to the lesson content. This could be:
+                - A discussion prompt
+                - A small problem to solve
+                - A mini-quiz idea
+                - A hands-on task (even if text-based initially)
+                - A coding challenge
+                - A design exercise
+                - A role-playing scenario
+                Focus on activities that promote active engagement and practical application of the concepts. If not applicable, provide an empty string or null.
+            4.  "reflection_questions": string - 1-3 thought-provoking questions designed to prompt learners to reflect on the lesson's content, connect it to their own experience, or think critically about the topic. If not applicable, provide an empty string or null.
+
+        Output Constraints:
+        - Do NOT include any additional text, explanations, or markdown formatting outside of the JSON object.
+        - Ensure the content within the JSON is well-formatted and readable.
         """
     )
 
@@ -378,7 +391,7 @@ def course_knowledge_gatherer_node(state: CourseState):
 @traceable(name="module_organizer_node")
 def module_organizer_node(state: CourseState):
     """
-    Organizes the course into modules based on objectives and gathered knowledge.
+    Organizes the course into modules and lessons based on objectives, target audience and gathered knowledge.
     """
     if not state.get("objective") or not state.get("knowledge"):
         print("Error: Objectives or knowledge not found in state for module organization.")
@@ -393,7 +406,7 @@ def module_organizer_node(state: CourseState):
     # Create LLM instructions for module organization
     module_organizer_instructions = SystemMessage(
         content=f"""You are an expert AI curriculum designer.
-        Your task is to structure a course into logical modules based on the provided objectives and gathered knowledge.
+        Your task is to structure a comprehensive course into logical, progressive, and easy-to-understand modules and lessons. Base the structure on the provided course objectives and synthesize the gathered knowledge to inform the content and flow.
 
         **Course Main Language:** {language}
         **Course Title:** {title}
@@ -404,12 +417,24 @@ def module_organizer_node(state: CourseState):
         **Gathered Knowledge:**
         {chr(10).join([f"- {k.title}: {k.content[:200]}..." for k in knowledge])}
 
-        Analyze the objectives and knowledge to define the overall module structure.
-        Generate a list of modules, where each module has a number (e.g., "Module 1", "Module 2"), a concise title, and a brief topic description.
-        The lessons list within each module should be empty at this stage.
+        Analyze the course objectives and the gathered knowledge to define a logical overall module structure. Ensure the modules build upon each other progressively.
+
+        Generate a list of modules. For each module:
+        - Provide a `number` (e.g., "Module 1", "Module 2").
+        - Provide a concise and descriptive `title` that clearly indicates the module's main topic.
+        - Provide an `achieved` field: A brief summary (1-2 sentences) of the key learning outcomes or skills a learner will gain specifically from completing this module. This should align with the overall course objectives.
+        - Generate a list of `lessons` within the module. For each lesson:
+            - Provide a `number` that includes the module number (e.g., "1.1", "1.2", "2.1").
+            - Provide a concise and informative `title` that reflects the lesson's specific topic.
+            - Only fill 'number' and 'title' fields.'
+
+        Ensure the lessons within each module follow a logical sequence and contribute to achieving the module's learning outcomes.
 
         Your output MUST be ONLY a JSON object matching the `ModulesList` schema, without any additional text, explanations, or markdown formatting outside the JSON.
-        Example: {{ "modules": [ {{ "number": "Module 1", "title": "Introduction", "topic": "Overview of the subject", "lessons": [] }}, {{ "number": "Module 2", "title": "Core Concepts", "topic": "Deep dive into key ideas", "lessons": [] }} ] }}
+        Example: {{ "modules": [
+        {{ "number": "Module 1", "title": "Introduction to AI Agents", "achieved": "Understand the fundamental concepts and applications of AI agents.", "lessons": [{{"number": "1.1", "title": "What are AI Agents?"}}, {{"number": "1.2", "title": "History and Evolution"}}] }},
+        {{ "number": "Module 2", "title": "Core Agent Architectures", "achieved": "Identify and differentiate between various core architectures used in AI agent design.", "lessons": [{{"number": "2.1", "title": "Deliberative Agents"}}, {{"number": "2.2", "title": "Reactive Agents"}}] }}
+        ]}}
         """
     )
 
@@ -435,12 +460,11 @@ def module_organizer_node(state: CourseState):
 @traceable(name="lesson_writer")
 def lesson_writer(state: CourseState):
     """ Generate lessons for each module based on course knowledge and module structure """
-    objective = state["objective"]
     knowledge = state["knowledge"]
     target_audience = state["target_audience"]
-    title = state["title"]
     modules = state["modules"]
     language = state["language"]
+    course_title = state["title"] # Get course_title from state
 
     if not modules:
         print("Error: No modules found in state for lesson writing.")
@@ -449,28 +473,36 @@ def lesson_writer(state: CourseState):
     updated_modules = []
     for module in modules:
         print(f"Generating lessons for {module.number} - {module.title}")
-        structured_llm = llm_with_tools.with_structured_output(LessonsList)
-        instructions = get_generate_lesson_instructions(
-            language=language,
-            module_number=module.number.split(" ")[-1], # Extract number from "Module X"
-            module_title=module.title,
-            module_topic=module.topic,
-            course_objectives=objective,
-            relevant_knowledge_base=knowledge,
-            course_target_audience=target_audience,
-            course_title=title
-        )
-        try:
-            lessons_instance = structured_llm.invoke([
-                instructions,
-                HumanMessage(content=f"Generate lessons for {module.number} based on the provided details and knowledge.")
-            ])
-            module.lessons = lessons_instance.lessons
-            print(f"Generated {len(module.lessons)} lessons for {module.number}.")
-        except Exception as e:
-            print(f"Error generating lessons for {module.number}: {e}")
-            # Optionally add an error lesson or message to the module
-            module.lessons = [Lesson(number=f"{module.number.split(' ')[-1]}.0", title="Error generating lessons", explanation=f"Could not generate lessons for this module due to an error: {e}", case_study="", idead="", reflection_questions="")]
+        for lesson in module.lessons:
+            structured_llm = llm_with_tools.with_structured_output(Lesson)
+            instructions = get_generate_lesson_instructions(
+                course_title=course_title, # Pass course_title
+                language=language,
+                module_number=module.number.split(" ")[-1], # Extract number from "Module X"
+                module_title=module.title,
+                module_achieved=module.achieved,
+                relevant_knowledge_base=knowledge,
+                course_target_audience=target_audience,
+                lesson=lesson # Pass the lesson object
+            )
+            try:
+                lesson_content = structured_llm.invoke([
+                    instructions,
+                    HumanMessage(content=f"Generate content for lesson {lesson.number}: {lesson.title} based on the provided details and knowledge.")
+                ])
+                # Update the lesson object with the generated content
+                lesson.explanation = lesson_content.explanation
+                lesson.case_study = lesson_content.case_study
+                lesson.idea = lesson_content.idea
+                lesson.reflection_questions = lesson_content.reflection_questions
+                print(f"Generated content for lesson {lesson.number}: {lesson.title}.")
+            except Exception as e:
+                print(f"Error generating content for lesson {lesson.number}: {e}")
+                # Optionally add an error lesson or message to the module
+                lesson.explanation = f"Could not generate content for this lesson due to an error: {e}"
+                lesson.case_study = ""
+                lesson.idea = ""
+                lesson.reflection_questions = ""
 
 
         updated_modules.append(module)
@@ -479,8 +511,29 @@ def lesson_writer(state: CourseState):
     return {"modules": updated_modules}
 
 summary_maker = SystemMessage(
-    content="""You are an best AI writer.
-Your goal is to generate a well-structured summary. Analyze the course and produce a well written and well structured summary.
+    content="""You are an AI writer skilled in crafting concise and impactful course conclusions.
+
+Your task is to generate a brief, narrative summary that serves as a conclusion for the entire course. This summary should synthesize the core knowledge and skills presented across all modules, providing a compact overview of what the learner has achieved and can now do.
+
+Follow these guidelines to create the concluding summary:
+
+1.  **Distill Core Concepts:** Review the provided course modules and identify the most essential concepts, skills, and overall journey the learner undertakes.
+2.  **Weave a Narrative:** Combine these distilled points into a cohesive paragraph or two. The summary should flow as a narrative, not a list or a simple concatenation of module topics. It should tell a story of the learner's progression or the knowledge built.
+3.  **Highlight Overall Value & Transformation:** Emphasize the overall transformation, key capabilities, or understanding the learner gains from the entire course journey. What is the main takeaway or the ultimate benefit of completing all modules?
+4.  **Be Conclusive:** Frame the summary as a look back at what has been covered and achieved, providing a sense of closure and completeness.
+
+The summary should be:
+
+*   **Concise and Compact:** Aim for a focused piece of text (e.g., 150-250 words, or adjust as needed) that captures the essence of the course.
+*   **Holistic:** Reflect the integrated knowledge from all modules, rather than a module-by-module breakdown.
+*   **Outcome-Oriented:** Focus on the final understanding, abilities, or perspective the learner has gained.
+*   **Engaging and Coherent:** Provide a smooth, readable, and insightful conclusion.
+
+**Important Instructions:**
+
+*   Do **not** break down the summary by explicitly listing individual modules or their titles.
+*   Do **not** include separate sections like "Target Audience" or "Key Learning Objectives" as distinct bullet points or paragraphs. If these aspects are crucial, weave them naturally into the concluding narrative.
+*   The output should be **only the summary text itself**. Do not include any additional text, explanations, headers, or markdown formatting that isn't part of the narrative flow of the conclusion.
 """
 )
 
@@ -488,19 +541,20 @@ Your goal is to generate a well-structured summary. Analyze the course and produ
 def finalize_course(state: CourseState):
     """ Combine course components to write a Course Summary """
     modules = state["modules"]
-    knowledge = state["knowledge"]
     language = state["language"]
 
     formatted_str_modules = "\n\n---\n\n".join([f"{item}" for item in modules])
-    formatted_str_knowledge = "\n\n---\n\n".join([f"{item}" for item in knowledge])
-    summary = llm_with_tools.invoke([
+    
+    summary_request_content = f"Write a concluding summary for the course based on the following:\nModules: {formatted_str_modules}\nLanguage: {language}\nAdhere strictly to the instructions provided in the system message for crafting a concluding summary."
+    
+    llm_response = llm_with_tools.invoke([
         summary_maker, 
-        HumanMessage(content=f"Write a summary for the course based on the following:\nModules: {formatted_str_modules}\nKnowledge: {formatted_str_knowledge} \nLanguage: {language}\nDo **not** include any additional text, explanations, or markdown formatting outside the JSON.")
+        HumanMessage(content=summary_request_content)
     ])
-    return {"summary": summary.content}
+    return {"summary": llm_response.content}
 
 # System message
-sys_msg = SystemMessage(content="You are a helpful assistant.")
+sys_msg = SystemMessage(content="You are a helpful ai assistant with tools in your arsenal.")
 
 # Node
 def assistant(state: MessagesState):
@@ -521,7 +575,32 @@ def is_user_want_make_a_course(state):
                                 Dont add any additional text, explanations, or markdown formatting.
                                """)
     result = llm_with_tools.invoke([instruction, HumanMessage(content=user_input)])
-    return result.content
+    raw_output = result.content
+    
+    decision_word = None
+    
+    if "</think>" in raw_output:
+        parts = raw_output.split("</think>")
+        if len(parts) > 1:
+            # Get the text after </think> and strip it
+            potential_decision = parts[-1].strip()
+            if potential_decision == "assistant":
+                decision_word = "assistant"
+            elif potential_decision == "analyze_user_input":
+                decision_word = "analyze_user_input"
+    
+    if decision_word is None:
+        stripped_output = raw_output.strip()
+        if stripped_output == "assistant":
+            decision_word = "assistant"
+        elif stripped_output == "analyze_user_input":
+            decision_word = "analyze_user_input"
+
+    if decision_word:
+        return decision_word
+    else:
+        print(f"Warning: LLM output could not be reliably parsed to 'assistant' or 'analyze_user_input'. Raw output: '{raw_output}'. Defaulting to 'assistant'.")
+        return "assistant"
 
 course_maker = StateGraph(CourseState)
 course_maker.add_node("entry_point_passthrough", entry_point_passthrough)
@@ -532,6 +611,7 @@ course_maker.add_node("course_knowledge_gatherer_node", course_knowledge_gathere
 course_maker.add_node("module_organizer_node", module_organizer_node)
 course_maker.add_node("lesson_writer", lesson_writer)
 course_maker.add_node("finalize_course", finalize_course)
+course_maker.add_node("tools", ToolNode(tools))
 
 course_maker.add_edge(START, "entry_point_passthrough")
 course_maker.add_conditional_edges("entry_point_passthrough", is_user_want_make_a_course, ["assistant", "analyze_user_input"])
@@ -541,5 +621,8 @@ course_maker.add_edge("course_knowledge_gatherer_node", "module_organizer_node")
 course_maker.add_edge("module_organizer_node", "lesson_writer")
 course_maker.add_edge("lesson_writer", "finalize_course")
 course_maker.add_edge("finalize_course", END)
+
+course_maker.add_conditional_edges("assistant", tools_condition)
+course_maker.add_edge("tools", "assistant")
 
 graph = course_maker.compile()
