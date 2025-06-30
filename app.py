@@ -15,6 +15,16 @@ def get_pandoc_config(course_title):
 \rhead{""" + course_title + r"""}
 \cfoot{Page \thepage\ of \pageref{LastPage}}
 \usepackage{lastpage}
+
+% --- START: Title Page Break Fix (NEW) ---
+% Redefine \maketitle to automatically add a new page after it's done
+\let\oldmaketitle\maketitle
+\renewcommand{\maketitle}{%
+  \oldmaketitle%
+  \newpage%
+}
+% --- END: Title Page Break Fix ---
+
 % --- START: TOC Page Break Fix ---
 % Redefine \tableofcontents to automatically add a new page after it's done
 \let\oldtableofcontents\tableofcontents
@@ -127,6 +137,7 @@ class MarkdownCourseGenerator:
         sources_found = False
         translation_table = str.maketrans('', '', '"/[]`')
         for item in knowledge_list:
+            # url = getattr(item, 'source', None)
             url = item.metadata.get('url')
             if url and url.lower().translate(translation_table).strip() not in {'n/a', 'unknown', 'url_not_provided', 'not specified', 'no url provided', '', 'source url not provided in context'}:
                 self.markdown_parts.append(f"* <{url}>\n")
@@ -139,12 +150,6 @@ class MarkdownCourseGenerator:
 
     def generate(self):
         """Generates the full Markdown string and returns it."""
-        # FIX 2: How page breaks before/after the TOC are handled:
-        # - A page break BEFORE the TOC is automatic after the title page.
-        # - A page break AFTER the TOC is handled by LaTeX's default template.
-        #   The \tableofcontents command usually ends with a \newpage.
-        
-        # The order of these calls determines the document structure.
         self._generate_objectives()
         self._generate_modules()
         self._generate_summary()
