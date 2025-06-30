@@ -51,51 +51,10 @@ You can try out the AI Course Generation Agent live on Hugging Face Spaces:
 5.  The agent will process the request through the different stages. This might take a few moments.
 6.  The generated course components (Objective, Knowledge snippets, Lesson, Summary) will be displayed on the page.
 
-## ⚙️ Local Setup (Optional)
-
-If you want to run this agent locally:
-
-1.  **Clone the repository:**
-    ```bash
-    git clone [YOUR_REPOSITORY_LINK_HERE # Replace with your Git repo link](https://github.com/Acceleratorll/course_maker_agent.git)
-    cd course_maker_agent
-    ```
-
-2.  **Create a virtual environment and activate it:**
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
-
-3.  **Install dependencies:**
-    ```bash
-    pip install -r requirements.txt
-    ```
-    *(Ensure your `requirements.txt` file lists all necessary packages: `langchain`, `langgraph`, `langchain-ollama`, `pydantic`, `python-dotenv`, `tavily-python`, `gradio`, `langsmith` etc.)*
-
-4.  **Set up Environment Variables:**
-    Create a `.env` file in the root directory of the project and add your API keys:
-    ```env
-    TAVILY_API_KEY="your_tavily_api_key"
-    GOOGLE_API_KEY="your-api-key"
-
-    # Optional: For LangSmith Tracing (highly recommended for debugging LangGraph)
-    # LANGCHAIN_TRACING_V2="true"
-    # LANGCHAIN_ENDPOINT="https://api.smith.langchain.com"
-    # LANGCHAIN_API_KEY="your_langsmith_api_key"
-    # LANGCHAIN_PROJECT="your_project_name_in_langsmith"
-    ```
-5.  **Run the Gradio Application:**
-    ```bash
-    python app.py
-    ```
-    This will start a local web server, and you can access the Gradio interface in your browser (usually at `http://127.0.0.1:7860`).
-
 ## 💡 Future Enhancements & Potential Improvements
 
 ✅ Refine parsing data to PDF
 ✅ Add RAG
 ☐ **Implement `Prerequisite` and `Homework` Generation:** Activate and integrate nodes for generating prerequisites and homework assignments into the `CourseState` and workflow.
-☐ **Error Handling & Resilience:** Add more robust error handling within graph nodes.
 
 *Generated with the help of AI, fine-tuned by a human.*
