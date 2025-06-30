@@ -94,7 +94,7 @@ If you want to run this agent locally:
 ## 💡 Future Enhancements & Potential Improvements
 
 ✅ Refine parsing data to PDF
-☐ Can Add Knowledge via user input(or choose maybe)
+✅ Add RAG
 ☐ **Implement `Prerequisite` and `Homework` Generation:** Activate and integrate nodes for generating prerequisites and homework assignments into the `CourseState` and workflow.
 ☐ **Error Handling & Resilience:** Add more robust error handling within graph nodes.
 
