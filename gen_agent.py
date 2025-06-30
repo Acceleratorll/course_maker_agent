@@ -3,14 +3,16 @@ import os
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 from typing import Annotated, List, Optional, TypedDict
-from langchain_ollama import ChatOllama
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_ollama import ChatOllama
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.graph import MessagesState, START, END, StateGraph
 from langchain_community.tools.tavily_search import TavilySearchResults
 from langsmith import traceable
 from langchain_core.tools import tool
 from langgraph.prebuilt import tools_condition, ToolNode
+from vector_rag import State, workflow
+from langchain_core.documents import Document
 
 class TargetAudience(BaseModel):
     age_range: Optional[str] = None
@@ -77,7 +79,7 @@ class CourseState(MessagesState):
     prerequisites: List[Prerequisite] = Field(description="The prerequisites of the course")
     objective: List[Objective] = Field(default_factory=list, description="The objective of the course")
     modules: List[Modules] = Field(default_factory=list, description="The modules of the course")
-    knowledge: List[Knowledge] = Field(default_factory=list, description="The knowledge of the lesson")
+    knowledge: List[Document] = Field(default_factory=list, description="The knowledge of the lesson")
     summary: str
     description: str
 
@@ -95,8 +97,11 @@ class UserInputAnalysis(BaseModel):
 load_dotenv()
 
 # Uncomment or choose your desired LLM
-# llm = ChatOllama(model="qwen3:4b", temperature=0.3)
-llm = ChatGoogleGenerativeAI(model="gemini-2.0-flash")
+# llm = ChatOllama(model="qwen3:1.7b", temperature=0.3)
+# llm_decider = ChatOllama(model="gemma3n:e2b", temperature=0.3)
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+llm_decider = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+vector_rag = workflow.compile()
 
 class SearchInput(BaseModel):
     research_need: str = Field(description="The primary topic, question, or information need that requires web research. This is the core of the search.")
@@ -220,6 +225,7 @@ def analyze_user_input(state: CourseState):
         analysis_instructions,
         HumanMessage(content=f"{command[-1].content}")
     ])
+    print(f"Analyzed User Input")
     return {
         "subject": result.subject,
         "title": result.title,
@@ -229,62 +235,79 @@ def analyze_user_input(state: CourseState):
     }
 
 @traceable(name="generate_objective")
-def get_generate_objective_instructions(subject, title, language, target_audience, added_details: Optional[str] = None):
-    target_audience_str = str(target_audience)
+def get_generate_objective_instructions(
+    subject: str,
+    title: str,
+    language: str,
+    target_audience: str,
+    added_details: Optional[str] = None
+) -> SystemMessage:
+    """
+    Generates an improved, expert-level system prompt for creating course learning objectives.
+    """
     return SystemMessage(
-        content=f"""You are an expert AI instructional designer with a specialization in curriculum development.
-        Your primary mission is to brainstorm the Course Details and then, craft a list of clear, compelling, and actionable learning objectives for a course.
+        content=f"""
+        You are not just a content generator; you are a world-class AI Curriculum Architect. You possess a Ph.D. in Educational Psychology and are a leading expert on applying cognitive science to instructional design. Your defining skill is translating abstract topics into a sequence of concrete, achievable, and motivational learning outcomes.
 
-        **Course Details to Brainstorm:**
-        1.  **Course Subject:** "{subject}"
-        2.  **Course Title:** "{title}"
-        3.  **Target Audience Profile:** {target_audience_str}
-        4.  **Added Details:** "{added_details}"
-        5.  **Main Language:** "{language}"
+        **Your Guiding Principles:**
+        1.  **The Learner's Journey:** Objectives are not a random list; they are a story. They must build upon each other logically, taking the learner from a point of not knowing to a point of confident application.
+        2.  **The 'So What?' Test:** Every objective must have a clear and compelling answer to the learner's question, "So what? Why should I care?" The outcome must be a tangible new capability.
+        3.  **Precision and Measurability:** Vague goals lead to vague results. You will use surgically precise action verbs that allow both the learner and an assessor to verify achievement.
 
-        **Core Task: Generate Learning Objectives**
+        **Your Internal Thought Process (Mandatory Steps):**
+        1.  **Deconstruct the Core Request:** I will first dissect the subject '{subject}', title '{title}', target audience '{target_audience}', language '{language}', and additional details '{added_details}'.
+        2.  **Empathize with the Learner Persona:** I will deeply consider the '{target_audience}'. Are they a complete novice who needs confidence-building steps? Or an expert looking for a specific, high-level skill? This empathy dictates the cognitive depth.
+        3.  **Select High-Impact Action Verbs (Bloom's Taxonomy):** Based on the learner persona, I will choose potent verbs.
+            *   **Beginner:** Focus on *Remembering & Applying* (e.g., Define, List, Identify, Execute, Implement, Calculate).
+            *   **Intermediate:** Focus on *Analyzing & Evaluating* (e.g., Differentiate, Organize, Compare, Appraise, Justify, Critique).
+            *   **Advanced/Expert:** Focus on *Creating* (e.g., Design, Formulate, Assemble, Construct, Hypothesize, Invent).
+        4.  **Structure the Narrative:** I will arrange the 3-5 objectives in a logical sequence. The first objective might be foundational (Define/Identify), leading to more complex ones (Apply/Analyze), and potentially culminating in a creative or evaluative task (Design/Critique).
+        5.  **Draft and Ruthlessly Refine:** I will draft each objective, then rigorously apply the 'So What?' test. I will ensure the `description` provides motivation and the `scope` prevents ambiguity.
+        6.  **Final Validation:** I will perform a final check to ensure my output is flawless, adheres to every instruction, and perfectly matches the JSON schema in the requested language.
 
-        You must generate a list of approximately 3-5 key learning objectives. Each objective must clearly define what a learner will be able to **DO** upon successful completion of this course or a significant module within it.
+        ---
 
-        **Detailed Instructions for Each Objective:**
+        **Course Context:**
+        *   **Subject:** "{subject}"
+        *   **Title:** "{title}"
+        *   **Target Audience Profile:** "{target_audience}"
+        *   **Additional Details:** "{added_details if added_details else 'None'}"
+        *   **Main Language:** "{language}"
 
-        For each learning objective, you will populate three fields: `goal`, `description`, and `scope`.
+        ---
 
-        1.  **`goal` (The Actionable Statement):**
-            *   This is the most critical part. It **MUST** start with the phrase: "Upon successful completion of this course, learners will be able to..."
-            *   Follow this phrase with a **strong, specific, action-oriented verb** that is observable and measurable (e.g., Analyze, Design, Implement, Evaluate, Create, Compare, Explain, Differentiate, Troubleshoot). Avoid vague verbs like "understand" or "learn about."
-            *   The rest of the sentence should clearly state the skill, knowledge, or competency the learner will acquire or demonstrate.
-            *   *Example `goal`*: "Upon successful completion of this course, learners will be able to design a responsive user interface for a mobile application using Figma."
+        **Core Task: Architect the Learning Objectives**
 
-        2.  **`description` (Elaboration and Context):**
-            *   Provide a brief (1-2 sentences) elaboration of the `goal`.
-            *   This should clarify the context, the 'what,' or the 'why' of the objective. It can add detail to the skill or knowledge being imparted.
-            *   It helps to explain the importance or relevance of achieving this specific `goal`.
-            *   *Example `description` (for the goal above)*: "This involves applying principles of mobile-first design and utilizing Figma's prototyping tools to create interactive mockups that adapt to various screen sizes."
+        Based on your expert analysis, generate a list of 3-5 cornerstone learning objectives that form a coherent learning path.
 
-        3.  **`scope` (Boundaries and Focus):**
-            *   Define the breadth or limits of this objective (1-2 sentences).
-            *   Indicate what is included or excluded, or the specific context/conditions under which the skill will be applied or demonstrated.
-            *   It helps to set realistic expectations and defines the focus area for that particular objective.
-            *   *Example `scope` (for the goal above)*: "The focus will be on core UI components and navigation patterns for common mobile app use cases, excluding advanced animations or backend integration."
+        **Instructions for Each Objective's Fields:**
 
-        **Guiding Principles for Objective Formulation:**
+        1.  **`goal` (The Verifiable Skill):**
+            *   **MUST** begin with a powerful, measurable action verb from the appropriate level of Bloom's Taxonomy.
+            *   **MUST** clearly state what the learner will be able to *do*.
+            *   **FORBIDDEN VERBS:** *understand, learn, know, grasp, be aware of, be familiar with, appreciate, discover*. These are immeasurable and must be avoided.
 
-        *   **Alignment:** Ensure EVERY objective is directly and logically aligned with the provided **Course Subject**, **Course Title**, and **Target Audience Profile**.
-        *   **Specificity:** Objectives should be precise and unambiguous.
-        *   **Measurability:** The action verb should allow for assessment of whether the learner has achieved the objective.
-        *   **Attainability (for the Target Audience):** Consider the `Target Audience Profile`. Objectives for 'beginners' should focus on foundational skills, while objectives for 'advanced' learners can target more complex synthesis or specialized knowledge or evaluation. The language and complexity should be appropriate.
-        *   **Relevance:** Each objective should contribute meaningfully to the overall learning outcomes of the course.
+        2.  **`description` (The Relevance & Motivation):**
+            *   A 1-2 sentence explanation that answers the learner's implicit question: **"Why does this matter to me?"**
+            *   Connect the skill to a real-world application, a problem it solves, or a more advanced skill it enables.
+            *   *Example:* "This objective is crucial because it bridges the gap between theoretical knowledge and practical application, enabling you to build the core logic for any data-driven feature."
 
-        **Output Format:**
+        3.  **`scope` (The Boundaries & Focus):**
+            *   A 1-2 sentence definition of the objective's limits to prevent scope creep and manage expectations.
+            *   Clearly define the "sandbox" the learner will be operating in. State what is included and explicitly what is excluded.
+            *   *Example:* "Your focus will be on writing the Python code for API endpoints. This scope does not extend to front-end UI design, advanced database optimization, or server deployment."
 
-        *   Your response **MUST** be **ONLY** a single, valid JSON object.
-        *   This JSON object **MUST** strictly adhere to the `ObjectivesList` schema, which looks like this:
-            {{ "objectives": [ {{ "goal": "...", "description": "...", "scope": "..." }}, ... ] }}
-        *   Do **NOT** include any additional text, explanations, or markdown formatting outside of this JSON object.
+        ---
+
+        **Final Output Mandate:**
+        *   Your response **MUST** be a single, raw, and valid JSON object.
+        *   Your response **MUST** be in **{language}**.
+        *   The JSON object **MUST** strictly adhere to the `CourseObjectives` schema:
+            `{{ "objectives": [ {{ "goal": "...", "description": "...", "scope": "..." }} ] }}`
+        *   Do **NOT** include any commentary, explanations, apologies, or markdown `json` block wrappers. The output must be pure JSON, ready for parsing.
         """
     )
-
+    
 @traceable(name="generate_core_course")
 def generate_core_course(state: CourseState):
     """ Generate a core element of making a course """
@@ -310,6 +333,7 @@ def generate_core_course(state: CourseState):
     if not hasattr(objectives_instance, "objectives"):
         return {"messages": state.get("messages", []) + [AIMessage(content="Error: The LLM output is missing the 'objectives' field.")]}
 
+    print(f"Successfully generated objectives.")
     return {"objective": objectives_instance.objectives}
 
 def get_generate_lesson_instructions(language, course_title, module_number, module_title, module_achieved, relevant_knowledge_base, course_target_audience, lesson):
@@ -336,7 +360,7 @@ def get_generate_lesson_instructions(language, course_title, module_number, modu
 
         The lesson content MUST be a JSON object with the following fields:
 
-            1.  "explanation": string - Detailed, well-written content explaining the lesson's concepts. This should be the core instructional material, tailored to the target audience's level of understanding and prior knowledge.
+            1.  "explanation": Detailed, well-written content explaining the lesson's concepts. This should be the core instructional material, tailored to the target audience's level of understanding and prior knowledge. If needed you can create high quality table for audience easier understanding.
                 - For beginner audiences, use analogies, real-world examples, and avoid technical jargon.
                 - For expert audiences, use precise language, technical details, and assume a high level of prior knowledge.
             2.  "case_study": string (Optional) - A relevant, real-world case study, detailed example, or practical scenario that directly illustrates and helps learners apply the concepts taught in the "explanation". This should provide concrete context and demonstrate the practical relevance of the lesson. If a case study is not applicable or necessary for a specific lesson, provide an empty string or null. Consider varying the format or complexity of case studies across lessons to maintain engagement.
@@ -372,16 +396,19 @@ def course_knowledge_gatherer_node(state: CourseState):
     # Use string representation of target_audience as context
     context = str(state.get("target_audience"))
     print(f"Initiating knowledge gathering for: {research_topic}")
-    gathered_knowledge = search_web_tool.invoke({
-        "research_need": research_topic,
-        "context": context,
+    print(f"Context: {context}")
+    print(f"Desired focus: {state.get('added_details')}")
+    gathered_knowledge = vector_rag.invoke({
+        "query": research_topic,
+        "target_audience": context,
         "goal": f"To gather foundational knowledge for creating lessons for the course '{state['title']}'.",
         "desired_focus": state.get("added_details")
     })
-    if not gathered_knowledge or any(k.title in ["Query Generation Failed", "Query Generation Error", "Search Execution Error", "No Results Found"] for k in gathered_knowledge):
-        error_message = f"I tried to gather knowledge but encountered an issue: {gathered_knowledge[0].content if gathered_knowledge else 'Unknown error during search tool invocation.'}"
-        print(error_message)
-        return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
+    gathered_knowledge = gathered_knowledge.get("documents")
+    # if not gathered_knowledge or any(k.title in ["Query Generation Failed", "Query Generation Error", "Search Execution Error", "No Results Found"] for k in gathered_knowledge):
+    #     error_message = f"I tried to gather knowledge but encountered an issue: {gathered_knowledge[0].content if gathered_knowledge else 'Unknown error during search tool invocation.'}"
+    #     print(error_message)
+    #     return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
     print(f"Successfully gathered {len(gathered_knowledge)} knowledge resources.")
     return {
         "knowledge": gathered_knowledge,
@@ -399,42 +426,64 @@ def module_organizer_node(state: CourseState):
 
     objective = state["objective"]
     knowledge = state["knowledge"]
+    context = "\n\n".join([doc.page_content for doc in knowledge])
     title = state["title"]
     target_audience = state["target_audience"]
     language = state["language"]
+    added_details = state["added_details"]
 
     # Create LLM instructions for module organization
     module_organizer_instructions = SystemMessage(
-        content=f"""You are an expert AI curriculum designer.
-        Your task is to structure a comprehensive course into logical, progressive, and easy-to-understand modules and lessons. Base the structure on the provided course objectives and synthesize the gathered knowledge to inform the content and flow.
+        content=f"""You are an expert AI curriculum designer, specializing in adult learning principles and effective online course creation.
+        Your primary task is to design a comprehensive and high-quality course structure based on the provided inputs. The structure should consist of logically sequenced modules and lessons that are progressive and easy for the target audience to understand.
 
-        **Course Main Language:** {language}
-        **Course Title:** {title}
-        **Target Audience:** {target_audience}
-        **Course Objectives:**
-        {chr(10).join([f"- {obj.goal}" for obj in objective])}
+        **Core Instructional Principles to Apply:**
 
-        **Gathered Knowledge:**
-        {chr(10).join([f"- {k.title}: {k.content[:200]}..." for k in knowledge])}
+        1.  **Learner-Centered Design:** The course structure must be tailored to the specified **Target Audience**. [5, 12] Consider their existing knowledge, potential challenges, and what would be most relevant and motivating for them.
+        2.  **Problem-Centered Approach:** Frame modules and lessons around solving real-world problems or developing practical skills that are directly applicable to the learners' lives or work. [3, 4, 6] Adults learn best when they can see the immediate relevance and application of the content.
+        3.  **Progressive Scaffolding:** The course must be structured logically, with each module building upon the knowledge and skills gained in the previous one. [5] Start with foundational concepts and gradually move to more complex topics.
+        4.  **Clear Learning Outcomes:** Every module and lesson should be tied to clear and measurable learning objectives. [5, 10] The `achieved` field for each module should clearly state what the learner will be able to *do* after completing it.
 
-        Analyze the course objectives and the gathered knowledge to define a logical overall module structure. Ensure the modules build upon each other progressively.
+        **Course Details:**
 
-        Generate a list of modules. For each module:
-        - Provide a `number` (e.g., "Module 1", "Module 2").
-        - Provide a concise and descriptive `title` that clearly indicates the module's main topic.
-        - Provide an `achieved` field: A brief summary (1-2 sentences) of the key learning outcomes or skills a learner will gain specifically from completing this module. This should align with the overall course objectives.
-        - Generate a list of `lessons` within the module. For each lesson:
-            - Provide a `number` that includes the module number (e.g., "1.1", "1.2", "2.1").
-            - Provide a concise and informative `title` that reflects the lesson's specific topic.
-            - Only fill 'number' and 'title' fields.'
+        *   **Course Main Language:** {language}
+        *   **Course Title:** {title}
+        *   **Target Audience:** {target_audience}
+        *   **Specific Request:** {added_details if added_details else 'None'}
+        *   **Course Objectives:**
+            {chr(10).join([f"- {obj.goal}" for obj in objective])}
 
-        Ensure the lessons within each module follow a logical sequence and contribute to achieving the module's learning outcomes.
+        *   **Gathered Knowledge (for context and content synthesis):**
+            {context}
 
-        Your output MUST be ONLY a JSON object matching the `ModulesList` schema, without any additional text, explanations, or markdown formatting outside the JSON.
-        Example: {{ "modules": [
-        {{ "number": "Module 1", "title": "Introduction to AI Agents", "achieved": "Understand the fundamental concepts and applications of AI agents.", "lessons": [{{"number": "1.1", "title": "What are AI Agents?"}}, {{"number": "1.2", "title": "History and Evolution"}}] }},
-        {{ "number": "Module 2", "title": "Core Agent Architectures", "achieved": "Identify and differentiate between various core architectures used in AI agent design.", "lessons": [{{"number": "2.1", "title": "Deliberative Agents"}}, {{"number": "2.2", "title": "Reactive Agents"}}] }}
-        ]}}
+        **Your Task:**
+
+        Analyze the provided **Core Instructional Principles** and **Course Details** to create a detailed course structure.
+        To ensure a balanced and well-paced learning experience, structure the course into 3 to 7 distinct modules. Each module must then be broken down into 3 to 7 focused lessons, allowing for in-depth topic coverage without overwhelming the learner and use provided main language.
+        
+        **Output Format:**
+
+        Your output **MUST** be a single JSON object that strictly adheres to the `ModulesList` schema. Do not include any text, explanations, or markdown formatting outside of the JSON object.
+
+        **JSON Schema:**
+
+        {{
+        "modules": [
+            {{
+            "number": "Module 1",
+            "title": "Module Title",
+            "achieved": "A 1-2 sentence summary of the key skills and knowledge the learner will have mastered upon completing this module. This should be action-oriented.",
+            "lessons": [
+                {{
+                "number": "1.1",
+                "title": "Lesson Title"
+                }},
+                // ... more lessons
+            ]
+            }},
+            // ... more modules
+        ]
+        }}
         """
     )
 
@@ -507,49 +556,55 @@ def lesson_writer(state: CourseState):
 
         updated_modules.append(module)
 
-    # Update the modules field in the state with the lessons added
+    print(f"Successfully generated lessons for each modules.")
     return {"modules": updated_modules}
 
-summary_maker = SystemMessage(
-    content="""You are an AI writer skilled in crafting concise and impactful course conclusions.
+def summary_maker(modules, language):
+    """
+    Generates a high-quality, holistic course summary using a refined prompt.
+    """
 
-Your task is to generate a brief, narrative summary that serves as a conclusion for the entire course. This summary should synthesize the core knowledge and skills presented across all modules, providing a compact overview of what the learner has achieved and can now do.
+    module_details = "\n".join(
+        [f"- Module {m.number}: {m.title} - {m.achieved}" for m in modules]
+    )
+    
+    prompt_content = f"""
+    You are an expert curriculum designer and professional writer, tasked with creating a compelling, holistic summary for a completed course. Your goal is to synthesize the core journey and outcomes into a concise narrative.
 
-Follow these guidelines to create the concluding summary:
+    **Course Content Overview:**
+    ---
+    {module_details}
+    ---
 
-1.  **Distill Core Concepts:** Review the provided course modules and identify the most essential concepts, skills, and overall journey the learner undertakes.
-2.  **Weave a Narrative:** Combine these distilled points into a cohesive paragraph or two. The summary should flow as a narrative, not a list or a simple concatenation of module topics. It should tell a story of the learner's progression or the knowledge built.
-3.  **Highlight Overall Value & Transformation:** Emphasize the overall transformation, key capabilities, or understanding the learner gains from the entire course journey. What is the main takeaway or the ultimate benefit of completing all modules?
-4.  **Be Conclusive:** Frame the summary as a look back at what has been covered and achieved, providing a sense of closure and completeness.
+    **Your Task:**
+    Based on the course content above, write a final summary. The summary MUST be written in **{language}**.
 
-The summary should be:
+    **Adhere to these critical rules:**
 
-*   **Concise and Compact:** Aim for a focused piece of text (e.g., 150-250 words, or adjust as needed) that captures the essence of the course.
-*   **Holistic:** Reflect the integrated knowledge from all modules, rather than a module-by-module breakdown.
-*   **Outcome-Oriented:** Focus on the final understanding, abilities, or perspective the learner has gained.
-*   **Engaging and Coherent:** Provide a smooth, readable, and insightful conclusion.
+    *   **Holistic Synthesis:** Do not simply list what was in each module. Instead, weave the key concepts together to describe the overall intellectual journey and the powerful new perspective the learner has gained.
+    *   **Outcome-Focused Narrative:** Emphasize what the learner can **do** or **understand** now that they've completed the course. Focus on the final capabilities, not the process of learning.
+    *   **Concise and Engaging:** The summary should be a single, flowing piece of text, approximately 150-250 words. It must be professional, coherent, and engaging.
+    *   **Strictly Avoid:**
+        *   Explicitly mentioning "Module 1," "Module 2," etc.
+        *   Using phrases like "In this course, you learned..." or "The course covered..."
+        *   Including separate sections for "Target Audience" or "Objectives."
 
-**Important Instructions:**
-
-*   Do **not** break down the summary by explicitly listing individual modules or their titles.
-*   Do **not** include separate sections like "Target Audience" or "Key Learning Objectives" as distinct bullet points or paragraphs. If these aspects are crucial, weave them naturally into the concluding narrative.
-*   The output should be **only the summary text itself**. Do not include any additional text, explanations, headers, or markdown formatting that isn't part of the narrative flow of the conclusion.
-"""
-)
+    **Output Format:**
+    The output must be **ONLY the summary text itself**. No titles, no headers, no markdown formatting—just the pure, narrative paragraph of the summary.
+    """
+    # In a real LangChain implementation, this would likely be part of a prompt template.
+    # Here, we return a SystemMessage as in the original example.
+    return SystemMessage(content=prompt_content)
 
 @traceable(name="finalize_course")
 def finalize_course(state: CourseState):
     """ Combine course components to write a Course Summary """
     modules = state["modules"]
     language = state["language"]
-
-    formatted_str_modules = "\n\n---\n\n".join([f"{item}" for item in modules])
-    
-    summary_request_content = f"Write a concluding summary for the course based on the following:\nModules: {formatted_str_modules}\nLanguage: {language}\nAdhere strictly to the instructions provided in the system message for crafting a concluding summary."
     
     llm_response = llm_with_tools.invoke([
-        summary_maker, 
-        HumanMessage(content=summary_request_content)
+        summary_maker(modules, language), 
+        HumanMessage(content="Write a summary for the course.")
     ])
     return {"summary": llm_response.content}
 
@@ -566,15 +621,15 @@ def entry_point_passthrough(state):
     return
 
 def is_user_want_make_a_course(state):
-    user_input = state["messages"][-1].content
+    user_input = str(state["messages"]) or "assistant"
     instruction = SystemMessage(content="""You are an AI decider. 
-                                Your purpose is to decide the next node to take. is user want to make a course?
+                                Your purpose is to decide the next node to take. is user want to make a course or learning book?
                                 The output should be:
                                 'assistant' if the user dont want to make a course
                                 'analyze_user_input' if the user want to make a course
                                 Dont add any additional text, explanations, or markdown formatting.
                                """)
-    result = llm_with_tools.invoke([instruction, HumanMessage(content=user_input)])
+    result = llm_decider.invoke([instruction, HumanMessage(content=f"{user_input}")])
     raw_output = result.content
     
     decision_word = None
