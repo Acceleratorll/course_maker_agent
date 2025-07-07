@@ -183,3 +183,129 @@ class SupabaseVectorManager:
         # Use the base client for deletion
         self.supabase_client.from_(TABLE_NAME).delete().in_("id", doc_ids).execute()
         print("Deletion command executed successfully.")
+        
+class DatabaseManager:
+    """
+    A manager class for handling generic CRUD operations with a Supabase table.
+    This class provides a robust, error-handling layer over the Supabase-py client.
+    """
+    def __init__(self):
+        """
+        Initializes the DatabaseManager and the Supabase client.
+        """
+        self.client: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("DatabaseManager initialized.")
+
+    def create_data(self, table_name: str, data: any) -> List[dict]:
+        """
+        Inserts one or more rows into a specified table.
+
+        Args:
+            table_name: The name of the table to insert data into.
+            data: A dictionary for a single row or a list of dictionaries for multiple rows.
+
+        Returns:
+            A list of dictionaries representing the inserted data.
+
+        Raises:
+            ValueError: If the insertion fails.
+        """
+        record_count = len(data) if isinstance(data, list) else 1
+        print(f"Attempting to insert {record_count} record(s) into '{table_name}'...")
+        try:
+            response = self.client.from_(table_name).insert(data).execute()
+            if response.error:
+                raise ValueError(f"API Error: {response.error.message}")
+            print(f"Successfully inserted {len(response.data)} record(s).")
+            return response.data
+        except Exception as e:
+            print(f"Error creating data in '{table_name}': {e}")
+            raise ValueError(f"Could not create data: {e}")
+
+    def read_data(self, table_name: str, select: str = "*", filters: dict = None, limit: int = 100) -> List[dict]:
+        """
+        Reads data from a table with optional filtering and limits.
+
+        Args:
+            table_name: The name of the table to read from.
+            select: The columns to select (e.g., "*", "id, title").
+            filters: A dictionary of filters to apply (e.g., {"column_name": "value"}).
+            limit: The maximum number of rows to return.
+
+        Returns:
+            A list of dictionaries representing the query results.
+        
+        Raises:
+            ValueError: If the read operation fails.
+        """
+        print(f"Reading data from '{table_name}' with select='{select}' and limit={limit}.")
+        try:
+            query = self.client.from_(table_name).select(select).limit(limit)
+            if filters:
+                for column, value in filters.items():
+                    query = query.eq(column, value)
+            
+            response = query.execute()
+            if response.error:
+                raise ValueError(f"API Error: {response.error.message}")
+            print(f"Successfully retrieved {len(response.data)} record(s).")
+            return response.data
+        except Exception as e:
+            print(f"Error reading data from '{table_name}': {e}")
+            raise ValueError(f"Could not read data: {e}")
+
+    def update_data(self, table_name: str, record_id: any, data: dict) -> dict:
+        """
+        Updates a specific record in a table by its ID.
+
+        Args:
+            table_name: The name of the table to update.
+            record_id: The ID of the record to update.
+            data: A dictionary containing the data to update.
+
+        Returns:
+            A dictionary representing the updated record.
+
+        Raises:
+            ValueError: If the update fails or no record is updated.
+        """
+        print(f"Updating record '{record_id}' in table '{table_name}'...")
+        try:
+            response = self.client.from_(table_name).update(data).eq("id", record_id).execute()
+            if response.error:
+                raise ValueError(f"API Error: {response.error.message}")
+            if not response.data:
+                raise ValueError(f"Update failed: No record found with ID '{record_id}'.")
+            print(f"Successfully updated record '{record_id}'.")
+            return response.data[0]
+        except Exception as e:
+            print(f"Error updating data in '{table_name}': {e}")
+            raise ValueError(f"Could not update data: {e}")
+
+    def delete_data(self, table_name: str, record_ids: any) -> List[dict]:
+        """
+        Deletes one or more records from a table by their IDs.
+
+        Args:
+            table_name: The name of the table to delete from.
+            record_ids: A single ID or a list of IDs to delete.
+
+        Returns:
+            A list of dictionaries representing the deleted records.
+
+        Raises:
+            ValueError: If the deletion fails.
+        """
+        if not isinstance(record_ids, list):
+            record_ids = [record_ids]
+        
+        print(f"Attempting to delete {len(record_ids)} record(s) from '{table_name}'...")
+        try:
+            response = self.client.from_(table_name).delete().in_("id", record_ids).execute()
+            if response.error:
+                raise ValueError(f"API Error: {response.error.message}")
+            print(f"Successfully deleted {len(response.data)} record(s).")
+            return response.data
+        except Exception as e:
+            print(f"Error deleting data from '{table_name}': {e}")
+            raise ValueError(f"Could not delete data: {e}")

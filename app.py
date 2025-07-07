@@ -74,6 +74,22 @@ class MarkdownCourseGenerator:
         self.markdown_parts = []
         self.extracted_sources = []
 
+    def _escape_latex_special_chars(self, text):
+        """Escapes LaTeX special characters in a given string."""
+        text = text.replace('\\n', '\\\\')
+        text = text.replace('\\', '\\textbackslash')  # Backslash first
+        text = text.replace('\\', '\textbackslash')  # Backslash first
+        text = text.replace('{', '\\{')
+        text = text.replace('}', '\\}')
+        text = text.replace('$', '\\$')
+        text = text.replace('#', '\\#')
+        text = text.replace('_', '\\_')
+        text = text.replace('~', '\\textasciitilde')
+        text = text.replace('^', '\\textasciicircum')
+        text = text.replace('&', '\\&')
+        text = text.replace('%', '\\%')
+        return text
+
     def _generate_objectives(self):
         objectives = self.data.get("objective")
         if not objectives: return
@@ -111,10 +127,11 @@ class MarkdownCourseGenerator:
                         getattr(lesson, 'important_areas', ''),
                         getattr(lesson, 'case_study', '')
                     ]
-                    self.markdown_parts.extend(f"{content}\n\n" for content in content_sections if content)
-            
-        # A final page break after all modules are done.
-        # This also serves as the page break BEFORE the summary.
+                    for content in content_sections:
+                        if content:
+                            escaped_content = self._escape_latex_special_chars(content)
+                            self.markdown_parts.append(f"{escaped_content}\n\n")
+
         self.markdown_parts.append("\n\\newpage\n")
 
     def _generate_summary(self):
