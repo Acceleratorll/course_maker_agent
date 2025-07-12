@@ -1,5 +1,7 @@
-from pydantic import BaseModel, Field
-from typing import List, Optional
+import json
+from typing import Union, List, Dict, Optional, TypedDict
+from datetime import datetime
+from pydantic import BaseModel, Field, validator
 from langchain_core.documents import Document
 from langgraph.graph import MessagesState
 
@@ -65,6 +67,52 @@ class Modules(BaseModel):
 class ModulesList(BaseModel):
     modules: List[Modules]
 
+class SearchQueries(BaseModel):
+    semantic_queries: List[str] = Field(description="A list of full-sentence, natural language queries designed to capture the user's intent for semantic search.")
+    keyword_queries: List[str] = Field(description="A list of short, concise keyword-based queries ideal for lexical search or database lookups.")
+    web_queries: List[str] = Field(default_factory=list, description="A list of queries optimized for web search engines, often combining keywords with operators or common search phrases.")
+
+class IdentifyKnowledge(BaseModel):
+    is_sufficient: bool = Field(default_factory=bool)
+    reasoning: str = Field(default_factory=str)
+    confidence_score: float = Field(default_factory=float)
+    identified_gaps: List[str] = Field(default_factory=list)
+
+class DocumentMetadata(BaseModel):
+    title: Optional[str] = Field(None, description="The title of the document or source.")
+    url: Optional[str] = Field(None, description="The URL of the document source.")
+    summary: Optional[str] = Field(None, description="A brief summary of the document content.")
+
+class Documents(BaseModel):
+    id: str
+    url: str
+    title: str
+    content: str
+    valid_at: datetime
+    invalid_at: Optional[datetime]
+    invalid_cause: Optional[str]
+    created_at: datetime
+    updated_at: datetime
+    metadata: Union[Dict[str, str], str]  # Allow both dict and string
+    # Add other potential metadata fields as needed
+    @validator('metadata', pre=True)
+    def parse_metadata(cls, value):
+        if isinstance(value, str):
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return {"content": value}  # Fallback
+        return value
+
+class DataState(TypedDict):
+    query: str
+    goal: str
+    desired_focus: str
+    target_audience: str
+    search_queries: SearchQueries
+    is_sufficient: bool
+    documents: List[Documents]
+
 class CourseState(MessagesState):
     id: str = Field(description="Unique identifier for the course state")
     title: str = Field(description="The title of the course")
@@ -76,13 +124,15 @@ class CourseState(MessagesState):
     prerequisites: List[Prerequisite] = Field(description="The prerequisites of the course")
     objective: List[Objective] = Field(default_factory=list, description="The objective of the course")
     modules: List[Modules] = Field(description="The modules of the course")
-    knowledge: List[Document] = Field(default_factory=list, description="The knowledge of the lesson")
+    knowledge: List[Documents] = Field(default_factory=list, description="The knowledge of the lesson")
     summary: str = Field(description="A summary of the course")
     description: str = Field(description="A detailed description of the course")
-
-class SearchQuery(BaseModel):
-    id: str = Field(description="Unique identifier for the search query")
-    search_query: str = Field(None, description="Search query for retrieval.")
+    semantic_queries: List[str] = Field(description="A list of full-sentence, natural language queries designed to capture the user's intent for semantic search.")
+    keyword_queries: List[str] = Field(description="A list of short, concise keyword-based queries ideal for lexical search or database lookups.")
+    web_queries: List[str] = Field(default_factory=list, description="A list of queries optimized for web search engines, often combining keywords with operators or common search phrases.")
+    is_sufficient: bool = Field(default_factory=bool)
+    identify_knowledge: IdentifyKnowledge
+    # search_queries: SearchQueries
 
 class UserInputAnalysis(BaseModel):
     id: str = Field(description="Unique identifier for the user input analysis")
@@ -95,8 +145,6 @@ class UserInputAnalysis(BaseModel):
     
 class SearchInput(BaseModel):
     id: str = Field(description="Unique identifier for the search input")
-    research_need: str = Field(description="The primary topic, question, or information need that requires web research. This is the core of the search.")
     desired_focus: Optional[str] = Field(None, description="Specific aspects, keywords, or angles to focus on or prioritize in the search. Helps narrow down results.")
     context: Optional[str] = Field(None, a="Brief context about who this information is for, if it influences the type or depth of information needed (e.g., 'for a beginner', 'technical expert').")
     goal: Optional[str] = Field(None, description="What will this information be used for? (e.g., 'to answer a specific user question', 'to get a general overview', 'to find supporting data').")
-    

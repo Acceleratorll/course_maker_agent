@@ -52,6 +52,10 @@ def module_organizer_instructions(language, title, target_audience, objective, a
         2.  **Problem-Centered Approach:** Frame modules and lessons around solving real-world problems or developing practical skills that are directly applicable to the learners' lives or work. [3, 4, 6] Adults learn best when they can see the immediate relevance and application of the content.
         3.  **Progressive Scaffolding:** The course must be structured logically, with each module building upon the knowledge and skills gained in the previous one. [5] Start with foundational concepts and gradually move to more complex topics.
         4.  **Clear Learning Outcomes:** Every module and lesson should be tied to clear and measurable learning objectives. [5, 10] The `achieved` field for each module should clearly state what the learner will be able to *do* after completing it.
+        
+        **Course Restrictions And Solutions:**
+        
+        1. Can't use image, video and audio as content or as core course teaching method. Use text-based learning materials, learning methods. use everything in text-based(that markdown format can cover e.g., tables, Blockquotes) to make high quality course.
 
         **Course Details:**
 
@@ -137,6 +141,12 @@ def get_generate_objective_instructions(
         *   **Additional Details:** "{added_details if added_details else 'None'}"
         *   **Main Language:** "{language}"
 
+        ---
+        
+        **Course Restrictions And Solutions:**
+        
+        1. Can't use image, video and audio as content or as core course teaching method. Use text-based learning materials, learning methods. use everything in text-based(that markdown format can cover e.g., tables, Blockquotes) to make high quality course.
+        
         ---
 
         **Core Task: Architect the Learning Objectives**
@@ -310,66 +320,235 @@ rag_prompt_template = ChatPromptTemplate.from_template(
 )
 
 knowledge_gap_prompt_template = ChatPromptTemplate.from_template(
-    """Objective: Generate highly targeted and precise search queries to fill specific knowledge gaps.
+    """**[CORE MISSION]**
+    Your sole mission is to formulate a precise list of high-impact web search queries. These queries are strategically designed to resolve the specific, pre-identified knowledge gaps listed below, enabling an automated agent to find the missing information needed to complete a course module.
 
-    User's Initial Question: "{query}"
-    User's Specific Request: "{details}"
+    **[PERSONA]**
+    You are an expert Autonomous Research Agent. Your specialty is converting abstract knowledge requirements into concrete, effective search engine queries that yield the most relevant information.
 
-    Available Information (deemed insufficient):
-    <context>
-    {context}
-    </context>
+    **[INPUT ANALYSIS & TASK]**
+    You have been provided with two key pieces of information:
+    1.  **The Overall Goal (`[COURSE OUTLINE]`):** This provides the macro-context (the subject, the audience) for your queries.
+    2.  **The Immediate Task (`[IDENTIFIED KNOWLEDGE GAPS]`):** This is your primary focus. It is a precise list of what is missing.
 
-    The available information does not fully answer the "User's Initial Question" with "User's Specific Request" with high accuracy and comprehensiveness.
-    To find the missing pieces, what 1 to 3 *highly specific* questions should we ask a search engine (like Google or Tavily)?
-    These questions should aim to uncover new, precise information directly relevant to answering "{query}" that is not already present in the "Available Information."
+    Your task is to convert **each item** in the `[IDENTIFIED KNOWLEDGE GAPS]` list into one or more high-quality, actionable search queries. Use the course outline to add context and specificity to your queries.
 
-    Think step-by-step:
-    1. What exact aspects of "{query}" with "{details}" are not addressed by the "Available Information"? Be very precise.
-    2. What specific facts, figures, definitions, examples, or perspectives are critically missing to achieve high accuracy and comprehensiveness?
-    3. Formulate these as concise, unambiguous, and highly targeted search queries. Avoid broad or general terms.
+    **[QUERY CONSTRUCTION BLUEPRINT]**
+    - **Directly Address the Gap:** Each query must clearly map to one of the identified gaps.
+    - **Precision is Key:** Aim for specific, multi-word queries.
+        - BAD (for a gap about validators): "pydantic"
+        - GOOD: "pydantic v2 data validation with custom types tutorial"
+    - **Combine Gap with Intent:** Merge the core concept from the gap with action-oriented or informational keywords.
+        - **Actions:** `how to`, `tutorial`, `guide`, `example`, `implement`, `best practices`
+        - **Information:** `vs`, `alternatives`, `performance`, `limitations`, `use cases`, `for production`
+    - **Incorporate Audience from Outline:** Add terms that filter for the right level (e.g., "for beginners", "advanced guide").
+    - **Use Advanced Operators (Sparingly):** `site:stackoverflow.com`, `filetype:pdf`, `inurl:blog`.
 
-    Output Requirements:
-    - Provide your answer ONLY as a JSON list of strings.
-    - Each string must be a search query.
-    - No other text or explanation.
+    **[CRITICAL EXAMPLE]**
+    - **COURSE OUTLINE:** A course on "Pydantic for Beginners".
+    - **IDENTIFIED KNOWLEDGE GAPS:**
+        - "Practical code examples of Pydantic custom validators"
+        - "How to use pydantic.Field for default values and aliases"
+        - "Explanation of data serialization to JSON"
+    - **RESULTING HIGH-IMPACT QUERIES:**
+        - "pydantic v2 custom validator tutorial for beginners"
+        - "python pydantic Field alias example"
+        - "pydantic dataclasses vs standard dataclasses"
+        - "how to serialize pydantic model to JSON with custom encoders"
 
-    Make sure search queries to uncover new information directly relevant and highly accurate.
-    """
+    **[YOUR TURN: EXECUTE THE MISSION]**
+
+    **[COURSE OUTLINE]**
+    ---
+    - **Title:** "{course_title}"
+    - **Target Audience:** "{target_audience}"
+    - **Learning Objectives:** "{learning_objectives}"
+    - **User's Specific Focus:** "{details}"
+    ---
+
+    **[IDENTIFIED KNOWLEDGE GAPS]**
+    ---
+    - **Identified Gaps: ** "{identified_gaps}"
+    ---
+
+    **[OUTPUT REQUIREMENTS]**
+    - Your output **MUST** be a single, raw, valid JSON object that strictly adheres to the schema below.
+    - You **MUST** generate 1 to 5 high-quality web search queries that directly target the identified gaps.
+    - **DO NOT** add any extra explanations, commentary, or markdown `json` wrappers around the output.
+
+    **[JSON SCHEMA TO FOLLOW]**
+    {{
+        "web_queries": ["query 1", "query 2", "query 3", ....]
+    }}
+"""
 )
 
 sufficiency_prompt_template = ChatPromptTemplate.from_template(
-    """Your task is to evaluate if the provided documents contain enough information to answer the user's query with high accuracy and comprehensiveness.
+    """You are an expert Curriculum Developer and Instructional Designer. Your mission is to rigorously assess if the provided "Provided Knowledge Base" contains enough substance and depth to create a high-quality educational course based on the "Course Outline".
 
-    **User Query:** "{query}"
-    **User Specific Request:** "{details}"
+    **[COURSE OUTLINE]**
+    - **Title:** "{course_title}"
+    - **Target Audience:** "{target_audience}"
+    - **Learning Objectives:** "{learning_objectives}"
+    - **User's Specific Focus:** "{details}"
 
-    **Retrieved Documents:**
+    **[PROVIDED KNOWLEDGE BASE]**
     ---
     {context}
     ---
 
-    **Instructions:**
-    Based *only* on the information within the "Retrieved Documents," determine if a person with expertise in the subject area could write a comprehensive, highly accurate, and factually correct answer to the "User Query" and "User Specific Request".
+    **[EVALUATION CRITERIA]**
+    Analyze the "Provided Knowledge Base" against the "Course Outline". A high-quality course requires more than just facts; it needs structure, practical examples, and appropriate depth. Ask yourself:
+    1.  **Coverage:** Does the knowledge base address all key learning objectives? Are there obvious gaps in the required topics?
+    2.  **Depth & Detail:** Is the information detailed enough for the target audience? For a "beginner" audience, are foundational concepts explained clearly? For an "advanced" audience, does the content provide nuance, best practices, and edge cases?
+    3.  **Practicality:** Does the knowledge base include practical examples, code snippets, case studies, or actionable steps? Theoretical knowledge alone is NOT sufficient.
+    4.  **Confidence:** Based ONLY on the provided text, how confident are you that you can build a course content that is accurate, comprehensive, and not just a superficial overview? Rate your confidence on a scale of 1 to 10, where 1 is not confident at all and 10 is very confident.
 
-    - A **comprehensive** answer directly addresses all parts of the user's query, covering all necessary sub-topics and details.
-    - A **highly accurate** answer means all facts presented are verifiable and precise, without ambiguity or generalization.
-    - A **factually correct** answer is one that can be fully supported by the provided text, with no external assumptions.
+    **[EXAMPLE 1: INSUFFICIENT]**
+    {{
+    "is_sufficient": false,
+    "confidence_score": 1,
+    "reasoning": "The provided context is too theoretical. It defines what Pydantic models are but lacks the practical code examples and implementation details needed to teach topics like custom validators and data serialization, which are critical for the course objectives.",
+    "identified_gaps": [
+        "Practical code examples of Pydantic custom validators",
+        "Tutorial on using pydantic.Field for extra configuration",
+        "Explanation and examples of JSON serialization with Pydantic"
+    ]
+    }}
 
-    Respond with only 'true' or 'false'.
+    **[EXAMPLE 2: SUFFICIENT]**
+    {{
+    "is_sufficient": true,
+    "confidence_score": 10,
+    "reasoning": "The provided context is comprehensive and practical. It covers all the key learning objectives with sufficient depth and detail, including practical examples and a case study.",
+    "identified_gaps": []
+    }}
     """
 )
 
 metadata_prompt_template = ChatPromptTemplate.from_template(
-       """Generate well-structured JSON metadata based on the following context:
-       {context}
-       
-       Output Requirements:
-       - Return valid JSON only
-       - Use the exact field names from the schema
-       - For datetime fields, use ISO 8601 format
-       - For null values, use null (not 'None')
-       - Metadata field should be a JSON object
-       """
+    """Generate well-structured JSON metadata based on the following context:
+    {context}
+    
+    Output Requirements:
+    - Return valid JSON only
+    - Use the exact field names from the schema
+    - For datetime fields, use ISO 8601 format
+    - For null values, use null (not 'None')
+    - Metadata field should be a JSON object
+    """
 )
 
+keyword_query_generation_prompt = ChatPromptTemplate.from_template(
+    """**[Persona]**
+You are an expert in information retrieval and search engine optimization (SEO). Your specialty is distilling complex topics into potent, high-signal keywords that are perfect for database lookups and lexical search.
+
+**[Task]**
+Your mission is to generate a list of **keyword queries** based on the provided course information. These queries will be used to find highly relevant content in a vector database using keyword-based search.
+
+**[Instructions for Keyword Query Generation]**
+1.  **Analyze the Context:** Deeply analyze the provided `title`, `subject`, `target_audience`, and `objectives`.
+2.  **Extract Core Concepts:** Identify the most critical nouns, technical terms, and essential concepts.
+3.  **Be Concise:** Queries should be short and to the point, typically 2-5 words.
+4.  **Avoid Natural Language:** Do not use full sentences, questions, or conversational language.
+5.  **Focus on "What," not "Why" or "How":** The queries should represent topics, not intents.
+6.  **Combine Keywords:** Create variations by combining the subject with audience level (e.g., "Python for beginners") or specific objectives (e.g., "Python decorators example").
+
+**[Example]**
+- If the course is "Advanced JavaScript for Senior Engineers" and an objective is "Master asynchronous patterns", good keyword queries would be: "JavaScript async await", "Promise.all performance", "senior engineer javascript interview".
+- Bad queries would be: "How do I use async/await in JavaScript?", "What are some advanced topics in JavaScript for senior engineers?".
+
+**[Course Information]**
+---
+{context}
+---
+
+**[Json Schema]**
+{{
+    "semantic_queries": [""],
+    "web_queries": [""],
+    "keyword_queries": ["query 1", "query 2", "query 3", ....]
+}}
+
+**[Output Format]**
+- Your output **MUST** be a single, raw, and valid JSON object.
+- The JSON object must be a list of strings: `["query 1", "query 2", "query 3", ....]`.
+- Generate 1 to 5 high-quality keyword queries.
+- Do **NOT** include any commentary, explanations, or markdown `json` block wrappers.
+"""
+)
+
+semantic_query_generation_prompt = ChatPromptTemplate.from_template(
+    """**[Persona]**
+You are a curriculum researcher and AI assistant with expertise in understanding user intent. Your strength is formulating natural language questions that capture the deeper meaning and goals behind a topic, making them ideal for semantic search.
+
+**[Task]**
+Your mission is to generate a list of **semantic queries** based on the provided course information. These queries will be used to find conceptually related content in a vector database using semantic (vector similarity) search.
+
+**[Instructions for Semantic Query Generation]**
+1.  **Analyze the Context:** Deeply analyze the provided `title`, `subject`, `target_audience`, and `objectives`.
+2.  **Empathize with the Learner:** Think from the perspective of the target audience. What questions would they ask to understand this topic? What problems are they trying to solve?
+3.  **Formulate Full Questions:** Queries should be complete, natural language questions.
+4.  **Capture Intent:** The queries should reflect the learner's goal (e.g., "How can I achieve X?", "What is the best way to do Y?", "Explain the difference between A and B.").
+5.  **Incorporate Context:** Weave in details about the audience's experience level and goals to make the questions more specific.
+
+**[Example]**
+- If the course is "Advanced JavaScript for Senior Engineers" and an objective is "Master asynchronous patterns", good semantic queries would be: "How can I optimize asynchronous JavaScript code for better performance in a large-scale application?", "What are the common pitfalls when using Promises and async/await in complex systems?", "Can you explain advanced error handling techniques for asynchronous operations in Node.js?".
+- Bad queries would be: "JavaScript async", "async/await tutorial".
+
+**[Course Information]**
+---
+{context}
+---
+
+**[Json Schema]**
+{{
+    "semantic_queries": ["query 1", "query 2", "query 3", ....],
+    "web_queries": [""],
+    "keyword_queries": [""]
+}}
+
+**[Output Format]**
+- Your output **MUST** be a single, raw, and valid JSON object.
+- The JSON object must be a list of strings: `["query 1", "query 2", "query 3", ....]`.
+- Generate 1 to 5 high-quality semantic queries.
+- Do **NOT** include any commentary, explanations, or markdown `json` block wrappers.
+"""
+)
+
+web_query_generation_prompt = ChatPromptTemplate.from_template(
+    """**[Persona]**
+You are a savvy digital researcher, an expert at crafting search engine queries that deliver the most relevant and high-quality results from the web. You know how to combine keywords with search operators and natural language to pinpoint exactly what you need.
+
+**[Task]**
+Your mission is to generate a list of **web search queries** based on the provided course information. These queries are designed to be used with a search engine like Google or Bing to find articles, tutorials, case studies, and documentation.
+
+**[Instructions for Web Query Generation]**
+1.  **Analyze the Context:** Deeply analyze the provided `title`, `subject`, `target_audience`, and `objectives`.
+2.  **Think Like a Search User:** Formulate queries that a real person would type into a search bar.
+3.  **Use Action-Oriented & Informational Keywords:** Combine the core topic with words like "how to", "tutorial", "best practices", "examples", "case study", "comparison", "for beginners", "advanced guide".
+4.  **Be Specific:** Create queries that are specific enough to filter out noise. Instead of "Python basics", a better query is "Python data types tutorial for beginners".
+5.  **Consider the Goal:** The queries should aim to find practical, educational content that would supplement the course.
+
+**[Example]**
+- If the course is "Advanced JavaScript for Senior Engineers" and an objective is "Master asynchronous patterns", good web search queries would be: "advanced javascript async patterns guide", "javascript promise vs async/await performance benchmark", "real-world examples of complex async flows in javascript", "best practices for error handling in node.js async code".
+- Less effective queries: "javascript", "how does async work?".
+
+**[Course Information]**
+---
+{context}
+---
+
+**[Json Schema]**
+{{
+    "semantic_queries": [""],
+    "web_queries": ["query 1", "query 2", "query 3", ....],
+    "keyword_queries": [""]
+}}
+
+**[Output Format]**
+- Your output **MUST** be a single, raw, and valid JSON object.
+- Generate 1 to 5 high-quality web search queries.
+- Do **NOT** include any commentary, explanations, or markdown `json` block wrappers.
+"""
+)

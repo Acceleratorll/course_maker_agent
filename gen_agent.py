@@ -11,12 +11,12 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 from langsmith import traceable
 from langchain_core.tools import tool
 from langgraph.prebuilt import tools_condition, ToolNode
-from vector_rag import State, workflow
+from vector_rag import workflow
 from langchain_core.documents import Document
 
 from schemas import (
     CourseState, UserInputAnalysis, ObjectivesList, ModulesList, 
-    SearchQuery, SearchInput, Knowledge, Lesson
+    SearchQueries, SearchInput, Knowledge, Lesson
 )
 
 from prompts import (
@@ -32,6 +32,7 @@ load_dotenv()
 # llm_decider = ChatOllama(model="gemma3n:e2b", temperature=0.3)
 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
 llm_decider = ChatGoogleGenerativeAI(model="gemini-2.5-flash")
+
 vector_rag = workflow.compile()
 
 @tool("search_web_tool", args_schema=SearchInput, return_direct=False)
@@ -47,28 +48,13 @@ def search_web_tool(
     executes the search, and returns results as a list of Knowledge objects.
     """
     # Use the globally defined LLM for query generation
-    query_generation_llm = llm.with_structured_output(SearchQuery)
+    query_generation_llm = llm.with_structured_output(SearchQueries)
     tavily_search = TavilySearchResults(max_results=10)
 
-    # Construct prompt for query generation
-    prompt_parts = [
-        "You are an expert at crafting precise web search queries.",
-        "Generate the single best search query to find relevant information based on the following:",
-        f"\n**Research Need:** \"{research_need}\""
-    ]
-    if desired_focus:
-        prompt_parts.append(f"- **Focus:** \"{desired_focus}\"")
-    if context:
-        prompt_parts.append(f"- **Audience/Context:** \"{context}\"")
-    if goal:
-        prompt_parts.append(f"- **Information Goal:** \"{goal}\"")
-    prompt_parts.append("\nReturn ONLY the search query string.")
-    query_instructions = SystemMessage(content="\n".join(prompt_parts))
 
     # Generate the search query
     try:
         generated_query_obj = query_generation_llm.invoke([
-            query_instructions,
             HumanMessage(content="Generate the query.")
         ])
         search_query = generated_query_obj.search_query
@@ -156,53 +142,53 @@ def generate_core_course(state: CourseState):
     print(f"Successfully generated objectives.")
     return {"objective": objectives_instance.objectives}
 
-@traceable(name="course_knowledge_gatherer_node")
-def course_knowledge_gatherer_node(state: CourseState):
-    """
-    Gathers knowledge for the course by utilizing the search_web_tool.
-    Formulates search queries based on course objectives and updates the state with results.
-    """
-    if not state.get("objective") or not state.get("subject"):
-        print("Error: Objectives or subject not found in state for knowledge gathering.")
-        return {"messages": state.get("messages", []) + [AIMessage(content="I need course objectives and subject to gather knowledge. Something went wrong.")]}
+# @traceable(name="course_knowledge_gatherer_node")
+# def course_knowledge_gatherer_node(state: CourseState):
+#     """
+#     Gathers knowledge for the course by utilizing the search_web_tool.
+#     Formulates search queries based on course objectives and updates the state with results.
+#     """
+#     if not state.get("objective") or not state.get("subject"):
+#         print("Error: Objectives or subject not found in state for knowledge gathering.")
+#         return {"messages": state.get("messages", []) + [AIMessage(content="I need course objectives and subject to gather knowledge. Something went wrong.")]}
 
-    objective_goals = "; ".join([obj.goal for obj in state["objective"]])
-    research_topic = f"Key concepts and information for a course on '{state['subject']}' (titled '{state['title']}') with objectives: {objective_goals}"
-    # Use string representation of target_audience as context
-    context = str(state.get("target_audience"))
-    print(f"Initiating knowledge gathering for: {research_topic}")
-    print(f"Context: {context}")
-    print(f"Desired focus: {state.get('added_details')}")
+#     objective_goals = "; ".join([obj.goal for obj in state["objective"]])
+#     research_topic = f"Key concepts and information for a course on '{state['subject']}' (titled '{state['title']}') with objectives: {objective_goals}"
+#     # Use string representation of target_audience as context
+#     context = str(state.get("target_audience"))
+#     print(f"Initiating knowledge gathering for: {research_topic}")
+#     print(f"Context: {context}")
+#     print(f"Desired focus: {state.get('added_details')}")
 
-    # Enhanced goal for vector_rag to emphasize accuracy and completeness
-    knowledge_gathering_goal = (
-        f"To gather comprehensive, accurate, and highly relevant foundational knowledge "
-        f"for creating detailed and authoritative lessons for the course '{state['title']}'. "
-        f"This knowledge will serve as the primary source for the course content."
-    )
+#     # Enhanced goal for vector_rag to emphasize accuracy and completeness
+#     knowledge_gathering_goal = (
+#         f"To gather comprehensive, accurate, and highly relevant foundational knowledge "
+#         f"for creating detailed and authoritative lessons for the course '{state['title']}'. "
+#         f"This knowledge will serve as the primary source for the course content."
+#     )
 
-    try:
-        gathered_knowledge_result = vector_rag.invoke({
-            "query": research_topic,
-            "target_audience": context,
-            "goal": knowledge_gathering_goal, # Use the enhanced goal
-            "desired_focus": state.get("added_details")
-        })
-        gathered_knowledge = gathered_knowledge_result.get("documents")
-    except Exception as e:
-        error_message = f"An error occurred during knowledge gathering: {e}"
-        print(error_message)
-        return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
+#     try:
+#         gathered_knowledge_result = vector_rag.invoke({
+#             "query": research_topic,
+#             "target_audience": context,
+#             "goal": knowledge_gathering_goal, # Use the enhanced goal
+#             "desired_focus": state.get("added_details")
+#         })
+#         gathered_knowledge = gathered_knowledge_result.get("documents")
+#     except Exception as e:
+#         error_message = f"An error occurred during knowledge gathering: {e}"
+#         print(error_message)
+#         return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
 
-    if not gathered_knowledge:
-        error_message = "Knowledge gathering completed, but no relevant resources were found. This might impact course quality."
-        print(error_message)
-        return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
-    print(f"Successfully gathered {len(gathered_knowledge)} knowledge resources.")
-    return {
-        "knowledge": gathered_knowledge,
-        "messages": state.get("messages", []) + [AIMessage(content=f"I've gathered some initial knowledge for the course. Found {len(gathered_knowledge)} resources.")]
-    }
+#     if not gathered_knowledge:
+#         error_message = "Knowledge gathering completed, but no relevant resources were found. This might impact course quality."
+#         print(error_message)
+#         return {"messages": state.get("messages", []) + [AIMessage(content=error_message)]}
+#     print(f"Successfully gathered {len(gathered_knowledge)} knowledge resources.")
+#     return {
+#         "knowledge": gathered_knowledge,
+#         "messages": state.get("messages", []) + [AIMessage(content=f"I've gathered some initial knowledge for the course. Found {len(gathered_knowledge)} resources.")]
+#     }
 
 def objectives_to_str(objectives) -> str:
     if not objectives:
@@ -353,7 +339,7 @@ course_maker.add_node("entry_point_passthrough", entry_point_passthrough)
 course_maker.add_node("assistant", assistant)
 course_maker.add_node("analyze_user_input", analyze_user_input)
 course_maker.add_node("generate_core_course", generate_core_course)
-course_maker.add_node("course_knowledge_gatherer_node", course_knowledge_gatherer_node)
+course_maker.add_node("course_knowledge_gatherer_node", vector_rag)
 course_maker.add_node("module_organizer_node", module_organizer_node)
 course_maker.add_node("lesson_writer", lesson_writer)
 course_maker.add_node("finalize_course", finalize_course)

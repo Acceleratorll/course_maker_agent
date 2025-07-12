@@ -1,8 +1,7 @@
 {
   "dockerfile_lines": [],
   "graphs": {
-    "course_maker": "./gen_agent.py:graph",
-    "course_two": "./flex_agent.py:graph"
+    "course_maker": "./gen_agent.py:graph"
   },
   "env": "./.env",
   "python_version": "3.12",

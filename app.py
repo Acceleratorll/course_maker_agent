@@ -1,9 +1,18 @@
+import sys
 import gradio as gr
 import pypandoc
 from gen_agent import graph
 import os
 import re
 from datetime import datetime
+
+class MockObject:
+    """A simple class to mimic objects with attributes."""
+    def __init__(self, **kwargs):
+        self.__dict__.update(kwargs)
+
+    def __repr__(self):
+        return f"MockObject({self.__dict__})"
 
 def get_pandoc_config(course_title):
     """Returns the pandoc configuration for a high-quality PDF."""
@@ -73,36 +82,69 @@ class MarkdownCourseGenerator:
         self.data = course_data
         self.markdown_parts = []
         self.extracted_sources = []
+        self.header_regex = re.compile(r'^\s*#{1,6}\s')
 
     def _escape_latex_special_chars(self, text):
-        """Escapes LaTeX special characters in a given string."""
-        text = text.replace('\\n', '\\\\')
-        text = text.replace('\\', '\\textbackslash')  # Backslash first
-        text = text.replace('\\', '\textbackslash')  # Backslash first
-        text = text.replace('{', '\\{')
-        text = text.replace('}', '\\}')
-        text = text.replace('$', '\\$')
-        text = text.replace('#', '\\#')
-        text = text.replace('_', '\\_')
-        text = text.replace('~', '\\textasciitilde')
-        text = text.replace('^', '\\textasciicircum')
-        text = text.replace('&', '\\&')
-        text = text.replace('%', '\\%')
+        """
+        Escapes LaTeX special characters in a given string in the correct order.
+        """
+        # Ensure text is a string to prevent errors
+        if not isinstance(text, str):
+            text = str(text)
+            
+        replacements = {
+            '\\': r'\textbackslash{}',
+            '&': r'\&',
+            '%': r'\%',
+            '$': r'\$',
+            '#': r'\#',
+            '_': r'\_',
+            '{': r'\{',
+            '}': r'\}',
+            '~': r'\textasciitilde{}',
+            '^': r'\textasciicircum{}',
+        }
+        
+        text = text.replace('\\', replacements['\\'])
+        
+        for char, escaped in replacements.items():
+            if char != '\\':
+                text = text.replace(char, escaped)
         return text
+
+    def _process_content_with_headers(self, content):
+        """
+        NEW: Processes content line by line. It preserves Markdown headers
+        and applies LaTeX escaping to all other lines.
+        """
+        if not content:
+            return ""
+
+        processed_lines = []
+        for line in content.split('\n'):
+            # Check if the start of the line matches the header pattern
+            if self.header_regex.match(line):
+                # This is a header, so add it without escaping
+                processed_lines.append(line)
+            else:
+                # This is regular content, so escape it
+                escaped_line = self._escape_latex_special_chars(line)
+                processed_lines.append(escaped_line)
+        
+        return "\n".join(processed_lines)
 
     def _generate_objectives(self):
         objectives = self.data.get("objective")
         if not objectives: return
 
-        # This section will not have a page break before it, allowing it to
-        # follow the Table of Contents.
         self.markdown_parts.append("## Learning Objectives {-}\n")
         if isinstance(objectives, list):
             for obj in objectives:
-                text = getattr(obj, 'goal', f"Could not process: {obj}")
-                self.markdown_parts.append(f"* {text}\n")
+                # Use the new processing function here as well, just in case
+                goal_text = getattr(obj, 'goal', f"Could not process: {obj}")
+                processed_text = self._process_content_with_headers(goal_text)
+                self.markdown_parts.append(f"* {processed_text}\n")
         
-        # Add a page break AFTER Learning Objectives
         self.markdown_parts.append("\n\\newpage\n")
 
     def _generate_modules(self):
@@ -111,15 +153,18 @@ class MarkdownCourseGenerator:
         
         for module in modules:
             mod_title = getattr(module, 'title', 'Untitled Module')
-            # FIX 1: Promote Module titles to Level 1 Header (#)
             self.markdown_parts.append(f"# {mod_title}\n")
-            self.markdown_parts.append(f"{getattr(module, 'achieved', '')}\n\n")
+            
+            achieved_text = getattr(module, 'achieved', '')
+            if achieved_text:
+                # Process this text too
+                processed_achieved = self._process_content_with_headers(achieved_text)
+                self.markdown_parts.append(f"{processed_achieved}\n\n")
             
             lessons = getattr(module, 'lessons', [])
             if isinstance(lessons, list):
                 for lesson in lessons:
                     les_title = getattr(lesson, 'title', 'Untitled Lesson')
-                    # FIX 1: Promote Lesson titles to Level 2 Header (##)
                     self.markdown_parts.append(f"## {les_title}\n\n")
                     
                     content_sections = [
@@ -128,9 +173,9 @@ class MarkdownCourseGenerator:
                         getattr(lesson, 'case_study', '')
                     ]
                     for content in content_sections:
-                        if content:
-                            escaped_content = self._escape_latex_special_chars(content)
-                            self.markdown_parts.append(f"{escaped_content}\n\n")
+                        # THE FIX: Use the new intelligent processing function
+                        processed_content = self._process_content_with_headers(content)
+                        self.markdown_parts.append(f"{processed_content}\n\n")
 
         self.markdown_parts.append("\n\\newpage\n")
 
@@ -138,28 +183,38 @@ class MarkdownCourseGenerator:
         summary = self.data.get("summary")
         if not summary: return
 
-        # The page break BEFORE summary is handled by the end of _generate_modules.
         self.markdown_parts.append("## Summary {-}\n")
         content = getattr(summary, 'content', str(summary))
-        self.markdown_parts.append(f"{content}\n")
+        # Use the new processing function on the summary content
+        processed_content = self._process_content_with_headers(content)
+        self.markdown_parts.append(f"{processed_content}\n")
         
-        # FIX 2: Add page break AFTER summary.
         self.markdown_parts.append("\n\\newpage\n")
 
     def _generate_sources(self):
+        # This function deals with URLs, so it doesn't need the header processing logic
         knowledge_list = self.data.get("knowledge")
         if not knowledge_list or not isinstance(knowledge_list, list): return
         
         self.markdown_parts.append("## Sources {-}\n")
+        # ... (rest of your _generate_sources function is fine and does not need changes)
         sources_found = False
         translation_table = str.maketrans('', '', '"/[]`')
-        for item in knowledge_list:
-            # url = getattr(item, 'source', None)
-            url = item.metadata.get('url')
-            if url and url.lower().translate(translation_table).strip() not in {'n/a', 'unknown', 'url_not_provided', 'not specified', 'no url provided', '', 'source url not provided in context'}:
-                self.markdown_parts.append(f"* <{url}>\n")
-                self.extracted_sources.append({"url": url})
-                sources_found = True
+        flat_documents = []
+        if knowledge_list:
+            for item in knowledge_list:
+                if isinstance(item, list):
+                    flat_documents.extend(item)
+                else:
+                    flat_documents.append(item)
+        
+        for doc in flat_documents:
+            if hasattr(doc, 'metadata') and doc.metadata:
+                url = doc.metadata.get('url')
+                if url and url.lower().translate(translation_table).strip() not in {'n/a', 'unknown', 'url_not_provided', 'not specified', 'no url provided', '', 'source url not provided in context'}:
+                    self.markdown_parts.append(f"* <{url}>\n")
+                    self.extracted_sources.append({"url": url})
+                    sources_found = True
         
         if not sources_found:
             self.markdown_parts.append("* No external sources were cited for this document.\n")
@@ -250,5 +305,84 @@ interface = gr.Interface(
     description="Enter a prompt to generate a course outline, lessons, and summary as a downloadable PDF using the LangGraph agent.\n\nPrompt Example:\n('make a course of ai agent concepts (use recent reference like open ai paper, anthropic paper, google paper, etc) for web developer')"
 )
 
+def run_test():
+    """
+    Runs a test of the PDF generation logic using sample data.
+    This bypasses the Gradio UI and the AI agent.
+    """
+    print("--- Running PDF Generation Test ---")
+
+    # 1. Create mock course data that mimics the AI agent's output
+    sample_course_data = {
+        "title": "My Awesome Test Course",
+        "objective": [
+            MockObject(goal="Learn how to test code effectively."),
+            MockObject(goal="Understand LaTeX special characters like #, $, and %."),
+        ],
+        "modules": [
+            MockObject(
+                title="Module 1: Getting Started",
+                achieved="Introduction to testing.",
+                lessons=[
+                    MockObject(
+                        title="Lesson 1.1: The Basics",
+                        explanation="""This is the main content. It includes special characters that need escaping: #, $, %, &, _, {, }, ~, ^, \\.
+### What Makes a System Truly Intelligent?
+
+Have you ever wondered how a smart thermostat knows when to turn on the heat, or how a chatbot seems to understand your questions and provide helpful answers? It's not just magic; it's the fundamental concept of an **AI Agent** at work. In this lesson, we'll peel back the layers to understand what an AI agent is, its core components, and the continuous cycle that enables its intelligent behavior.
+
+### Why This Matters: Your Foundation in AI
+
+Understanding AI agents isn't just academic; it's the bedrock for comprehending nearly every advanced AI system you'll encounter. From self-driving cars to personalized recommendation engines, the underlying principles of how these systems perceive their surroundings and make decisions are rooted in the AI agent model. Grasping these fundamentals will empower you to analyze, design, and even troubleshoot AI solutions in the real world.
+                        """,
+                        important_areas="Focus on the `_escape_latex_special_chars` function.",
+                        case_study="A case study of a successful test."
+                    )
+                ]
+            )
+        ],
+        "summary": MockObject(content="This is the course summary."),
+        "knowledge": [
+            [MockObject(metadata={'url': 'https://www.example.com/source1'})],
+            MockObject(metadata={'url': 'https://www.example.com/source2'})
+        ]
+    }
+    
+    try:
+        # 1. Call the PDF creation function directly
+        print("Generating test PDF...")
+        # Make sure to provide a valid path for saving the test file
+        test_output_dir = "D:/Assets/Project/langgraph/course_maker_agent/test"
+        os.makedirs(test_output_dir, exist_ok=True) # Create the directory if it doesn't exist
+        
+        pdf_path, sources = create_course_pdf(sample_course_data, filename_suffix="_TEST.pdf")
+        
+        # Move the file to your desired test directory
+        final_pdf_path = os.path.join(test_output_dir, os.path.basename(pdf_path))
+        os.rename(pdf_path, final_pdf_path)
+        pdf_path = final_pdf_path
+
+        # 2. Verify the output
+        if os.path.exists(pdf_path):
+            print(f"✅ SUCCESS: PDF created at '{pdf_path}'")
+            print(f"✅ SUCCESS: Extracted {len(sources)} sources.")
+        else:
+            print(f"❌ FAILURE: PDF file was not created.")
+            
+    except Exception as e:
+        print(f"❌ FAILURE: An error occurred during the test: {e}")
+    # finally:
+    #     # 4. Clean up the generated file
+    #     if pdf_path and os.path.exists(pdf_path):
+    #         os.remove(pdf_path)
+    #         print(f"--- Cleaned up test file: '{pdf_path}' ---")
+
+
 if __name__ == "__main__":
-    interface.launch()
+    # Check if the '--test' argument was passed
+    if "--test" in sys.argv:
+        run_test()
+    else:
+        # If no '--test' argument, launch the Gradio interface
+        print("--- Launching Gradio Interface ---")
+        interface.launch()

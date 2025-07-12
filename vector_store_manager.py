@@ -134,19 +134,20 @@ class SupabaseVectorManager:
             print(f"Error inserting documents: {response.error or 'No data returned'}")
             return []
 
-    def perform_hybrid_search(self, q: str, k: int = 15) -> List[Document]:
+    def perform_hybrid_search(self, q: str, k_q: str, k: int = 15) -> List[Document]:
         """
         Performs a hybrid search by calling the custom 'hybrid_search' RPC function
         in Supabase, combining full-text and semantic search.
         """
-        print(f"\n--- [HYBRID SEARCH] Searching for documents related to: '{q}' ---")
+        combined_q = f"{q} {k_q}"
+        print(f"\n--- [HYBRID SEARCH] Searching for documents related to: '{combined_q}' ---")
 
         # 1. Embed the query text
         query_vector = self.embeddings.embed_query(q)
 
         # 2. Define the parameters for the RPC call
         rpc_params = {
-            "query_text": q,
+            "query_text": combined_q,
             "query_embedding": query_vector,
             "match_count": k,
         }
